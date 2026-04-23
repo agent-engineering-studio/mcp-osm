@@ -1,6 +1,17 @@
 # mcp-osm
 
+[![CI](https://github.com/agent-engineering-studio/mcp-osm/actions/workflows/ci.yml/badge.svg)](https://github.com/agent-engineering-studio/mcp-osm/actions/workflows/ci.yml)
+[![Release Docker images (GHCR)](https://github.com/agent-engineering-studio/mcp-osm/actions/workflows/release-docker.yml/badge.svg)](https://github.com/agent-engineering-studio/mcp-osm/actions/workflows/release-docker.yml)
+[![osm-mcp image](https://ghcr-badge.egpl.dev/agent-engineering-studio/mcp-osm/osm-mcp/latest_tag?trim=major&label=osm-mcp)](https://github.com/agent-engineering-studio/mcp-osm/pkgs/container/mcp-osm%2Fosm-mcp)
+[![osm-agent image](https://ghcr-badge.egpl.dev/agent-engineering-studio/mcp-osm/osm-agent/latest_tag?trim=major&label=osm-agent)](https://github.com/agent-engineering-studio/mcp-osm/pkgs/container/mcp-osm%2Fosm-agent)
+
 **MCP server per OpenStreetMap + agente Microsoft Agent Framework (C# GA 1.2.0) con Ollama**, impacchettato in Docker Compose e deployabile su Azure Container Apps via GitHub Actions / script bash / script PowerShell.
+
+> Le immagini sono pubblicate automaticamente su **GitHub Container Registry**:
+> - `ghcr.io/agent-engineering-studio/mcp-osm/osm-mcp`
+> - `ghcr.io/agent-engineering-studio/mcp-osm/osm-agent`
+>
+> Tag disponibili: `latest` (branch `main`), `vX.Y.Z` (release tag), `sha-<short>` (per SHA). Multi-arch `linux/amd64` + `linux/arm64`. Vedi [Quick start con immagini GHCR](#quick-start-con-immagini-ghcr).
 
 Ispirato a [`jagan-shanmugam/open-streetmap-mcp`](https://github.com/jagan-shanmugam/open-streetmap-mcp) (versione Python originale dei tool OSM) e allineato ai pattern del progetto interno [`agent-engineering-studio/knowledge-graph`](../knowledge-graph) (stessi profili Compose, entrypoint Ollama auto-pull, layout multi-servizio).
 
@@ -16,19 +27,20 @@ Documentazione ufficiale Microsoft di riferimento:
 
 1. [Architettura](#architettura)
 2. [MCP tools esposti](#mcp-tools-esposti)
-3. [Quick start (Docker)](#quick-start-docker)
-4. [Quick start (locale senza Docker)](#quick-start-locale-senza-docker)
-5. [Come funziona l'integrazione MS Agent Framework](#come-funziona-lintegrazione-ms-agent-framework)
-6. [API HTTP dell'agent](#api-http-dellagent)
-7. [Configurazione (`.env`)](#configurazione-env)
-8. [Deploy su Azure](#deploy-su-azure)
-9. [CI / GitHub Actions](#ci--github-actions)
-10. [Uso del solo MCP server (Claude Desktop / Cursor / VS Code)](#uso-del-solo-mcp-server)
-11. [Testing](#testing)
-12. [Struttura del progetto](#struttura-del-progetto)
-13. [Versioni dei pacchetti](#versioni-dei-pacchetti)
-14. [Troubleshooting](#troubleshooting)
-15. [Licenza e attribuzione dati](#licenza-e-attribuzione-dati)
+3. [Quick start con immagini GHCR](#quick-start-con-immagini-ghcr)
+4. [Quick start (build locale con Docker)](#quick-start-build-locale-con-docker)
+5. [Quick start (locale senza Docker)](#quick-start-locale-senza-docker)
+6. [Come funziona l'integrazione MS Agent Framework](#come-funziona-lintegrazione-ms-agent-framework)
+7. [API HTTP dell'agent](#api-http-dellagent)
+8. [Configurazione (`.env`)](#configurazione-env)
+9. [Deploy su Azure](#deploy-su-azure)
+10. [CI / GitHub Actions](#ci--github-actions)
+11. [Uso del solo MCP server (Claude Desktop / Cursor / VS Code)](#uso-del-solo-mcp-server)
+12. [Testing](#testing)
+13. [Struttura del progetto](#struttura-del-progetto)
+14. [Versioni dei pacchetti](#versioni-dei-pacchetti)
+15. [Troubleshooting](#troubleshooting)
+16. [Licenza e attribuzione dati](#licenza-e-attribuzione-dati)
 
 ---
 
@@ -108,7 +120,80 @@ attraction, bus_station, train_station
 
 ---
 
-## Quick start (Docker)
+## Quick start con immagini GHCR
+
+Se non vuoi buildare nulla in locale usa il file parallelo [`docker-compose.ghcr.yml`](docker-compose.ghcr.yml) che punta direttamente alle immagini pubblicate su GitHub Container Registry dal workflow [`release-docker.yml`](.github/workflows/release-docker.yml) su ogni push a `main` e su ogni tag `v*.*.*`.
+
+### Prerequisiti
+
+- Docker Desktop (Windows/macOS) o Docker Engine (Linux)
+- Ollama in esecuzione (sull'host, oppure via profilo `cpu` / `gpu` come sotto)
+
+### Avvio (immagini pubbliche `:latest`)
+
+```bash
+cp .env.example .env
+# modifica .env se vuoi cambiare modello LLM o endpoint OSM custom
+
+# Full stack con Ollama già attivo sull'host
+docker compose -f docker-compose.ghcr.yml --profile prod up -d
+
+# Full stack + Ollama CPU-only in container
+docker compose -f docker-compose.ghcr.yml --profile prod --profile cpu up -d
+
+# Full stack + Ollama su GPU NVIDIA
+docker compose -f docker-compose.ghcr.yml --profile prod --profile gpu up -d
+```
+
+### Pinning di un tag specifico
+
+```bash
+OSM_IMAGE_TAG=v1.2.3 \
+  docker compose -f docker-compose.ghcr.yml --profile prod up -d
+
+# oppure per commit specifico (SHA a 7 caratteri)
+OSM_IMAGE_TAG=sha-abc1234 \
+  docker compose -f docker-compose.ghcr.yml --profile prod up -d
+```
+
+Variabili esposte dal compose:
+
+| Variabile         | Default                       | Note                              |
+|-------------------|-------------------------------|-----------------------------------|
+| `GHCR_OWNER`      | `agent-engineering-studio`    | Owner / org GitHub                |
+| `GHCR_REPO`       | `mcp-osm`                     | Nome del repo                     |
+| `OSM_IMAGE_TAG`   | `latest`                      | Tag immagini (latest / vX.Y.Z / sha-xxx) |
+
+### Se le immagini fossero private
+
+La prima volta che il workflow pubblica su GHCR il package è **privato** per default. Per renderlo pubblico vai su **github.com/<owner>/<repo>/pkgs/container/<image>** → **Package settings** → **Change visibility** → `Public`.
+
+Finché restano private, prima dell'`up` serve un login:
+
+```bash
+# Crea un Personal Access Token (classic) con scope `read:packages`
+echo $CR_PAT | docker login ghcr.io -u <tuo-username> --password-stdin
+```
+
+### Esempio standalone (solo MCP server, senza compose)
+
+Utile se vuoi esporre l'MCP su SSE a un client esterno (Claude Desktop via tunnel, Cursor, VS Code) senza tirarti dietro l'agent .NET:
+
+```bash
+docker run --rm -p 8080:8080 \
+  -e OSM_USER_AGENT="osm-mcp/0.1 (tuo-nome)" \
+  -e OSM_CONTACT_EMAIL="you@example.com" \
+  ghcr.io/agent-engineering-studio/mcp-osm/osm-mcp:latest
+
+# test
+curl -fsS http://localhost:8080/sse
+```
+
+---
+
+## Quick start (build locale con Docker)
+
+Usa questa modalità se stai modificando il codice e vuoi buildare le immagini localmente.
 
 ### Prerequisiti
 
@@ -384,6 +469,26 @@ Triggerato su ogni push / PR su `main`:
 2. **.NET Agent** → `dotnet restore` + `dotnet build -c Release`
 3. **Docker smoke** → build delle 2 immagini con cache GHA (no push)
 
+### `release-docker.yml`
+
+Pubblica le immagini su **GitHub Container Registry** (`ghcr.io/<owner>/<repo>/<image>`).
+
+Triggerato da:
+
+- push sul branch `main` → tag `latest` + `sha-<short>` + `main`
+- push di un tag `v*.*.*` → tag semver `vX.Y.Z`, `X.Y`, `X` (+ `latest` se abilitato)
+- `workflow_dispatch` manuale (input `push_latest=true/false`)
+
+Caratteristiche:
+
+- **multi-arch** `linux/amd64` + `linux/arm64` (via QEMU + Buildx)
+- job in **matrice** per `osm-mcp` e `osm-agent` (build in parallelo, cache GHA separata per immagine)
+- **label OCI** auto-generate da `docker/metadata-action`
+- `provenance: true` + `sbom: true` (supply-chain attestation)
+- autenticazione via `GITHUB_TOKEN` (scope `packages: write`) — nessun segreto extra richiesto
+
+La prima volta che il workflow gira, il package su GHCR è **privato**: visibilità cambiabile da **Package settings → Change visibility → Public** nella UI di GitHub.
+
 ### `deploy-azure.yml`
 
 Triggerato da:
@@ -511,7 +616,8 @@ curl -fsS -XPOST http://localhost:8090/chat -H 'Content-Type: application/json' 
 mcp-osm/
 ├── README.md                       ← questo file
 ├── Makefile                        ← target di sviluppo + deploy
-├── docker-compose.yml              ← profili dev / prod / gpu / cpu
+├── docker-compose.yml              ← build locale, profili dev / prod / gpu / cpu
+├── docker-compose.ghcr.yml         ← consuma immagini pre-buildate da GHCR
 ├── .env.example
 ├── .gitignore
 │
@@ -545,7 +651,8 @@ mcp-osm/
 │   └── deploy-azure.ps1            ← Windows (PowerShell 7+)
 │
 └── .github/workflows/
-    ├── ci.yml                      ← lint/test/build su PR
+    ├── ci.yml                      ← lint/test/build (smoke) su PR
+    ├── release-docker.yml          ← build + push multi-arch su GHCR
     └── deploy-azure.yml            ← push tag v* → ACR + Container Apps
 ```
 
