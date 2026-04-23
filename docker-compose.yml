@@ -1,0 +1,124 @@
+# ── Profiles ──────────────────────────────────────────────────────────────────
+#
+#   dev   → only Ollama (host or container) for local development
+#   prod  → full stack: osm-mcp + osm-agent
+#   gpu   → Ollama with NVIDIA GPU (use alongside dev or prod)
+#   cpu   → Ollama CPU-only (use alongside dev or prod)
+#
+# Quick reference (see Makefile):
+#   docker compose --profile prod up -d              # full stack, Ollama on host
+#   docker compose --profile prod --profile gpu up   # full stack + Ollama GPU
+#   docker compose --profile prod --profile cpu up   # full stack + Ollama CPU
+#   docker compose --profile dev  --profile cpu up   # Ollama only (CPU)
+#
+# ──────────────────────────────────────────────────────────────────────────────
+
+services:
+  # ── OSM MCP server (Python FastMCP, SSE transport) ─────────────────────────
+  osm-mcp:
+    container_name: osm-mcp
+    profiles: [prod]
+    build:
+      context: ./osm-mcp
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      - MCP_TRANSPORT=sse
+      - MCP_HOST=0.0.0.0
+      - MCP_PORT=8080
+      - NOMINATIM_URL=${NOMINATIM_URL:-https://nominatim.openstreetmap.org}
+      - OVERPASS_URL=${OVERPASS_URL:-https://overpass-api.de/api/interpreter}
+      - OSRM_URL=${OSRM_URL:-https://router.project-osrm.org}
+      - OSM_USER_AGENT=${OSM_USER_AGENT:-osm-mcp/0.1 (agent-engineering-studio)}
+      - OSM_CONTACT_EMAIL=${OSM_CONTACT_EMAIL:-}
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import socket; socket.create_connection(('localhost',8080),3).close()\""]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # ── OSM Agent (C# / .NET, Microsoft Agent Framework) ──────────────────────
+  osm-agent:
+    container_name: osm-agent
+    profiles: [prod]
+    build:
+      context: ./osm-agent
+      dockerfile: Dockerfile
+    ports:
+      - "8090:8090"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=${ASPNETCORE_ENVIRONMENT:-Production}
+      # OLLAMA_BASE_URL:
+      #   default        → http://host.docker.internal:11434 (Ollama on host)
+      #   profile gpu    → http://ollama-gpu:11434
+      #   profile cpu    → http://ollama-cpu:11434
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      - OLLAMA_LLM_MODEL=${OLLAMA_LLM_MODEL:-qwen2.5:7b}
+      - MCP_SERVER_URL=${MCP_SERVER_URL:-http://osm-mcp:8080/sse}
+    depends_on:
+      osm-mcp:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8090/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  # ── Ollama GPU (NVIDIA) ───────────────────────────────────────────────────
+  ollama-gpu:
+    container_name: osm-ollama-gpu
+    profiles: [gpu]
+    build:
+      context: ./infra/ollama
+      dockerfile: Dockerfile
+    environment:
+      - OLLAMA_MODELS=${OLLAMA_MODELS:-qwen2.5:7b}
+    ports:
+      - "127.0.0.1:11434:11434"
+    volumes:
+      - ollama_models:/root/.ollama
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list > /dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 120s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  # ── Ollama CPU-only ────────────────────────────────────────────────────────
+  ollama-cpu:
+    container_name: osm-ollama-cpu
+    profiles: [cpu]
+    build:
+      context: ./infra/ollama
+      dockerfile: Dockerfile
+    environment:
+      - OLLAMA_MODELS=${OLLAMA_MODELS:-qwen2.5:7b}
+    ports:
+      - "127.0.0.1:11434:11434"
+    volumes:
+      - ollama_models:/root/.ollama
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list > /dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 120s
+
+volumes:
+  ollama_models:
+
+networks:
+  default:
+    name: osm_mcp_network

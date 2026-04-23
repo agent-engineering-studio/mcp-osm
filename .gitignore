@@ -1,0 +1,40 @@
+# Env
+.env
+.env.local
+*.env.bak
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+dist/
+build/
+*.egg-info/
+
+# .NET
+bin/
+obj/
+*.user
+*.suo
+out/
+
+# IDEs
+.vs/
+.vscode/
+.idea/
+
+# Claude Code (user-local settings)
+.claude/settings.local.json
+
+# Docker
+.docker-build-cache/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
