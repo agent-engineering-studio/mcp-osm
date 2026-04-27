@@ -25,7 +25,7 @@ def test_chat_response_roundtrip_from_ckan_fixture():
     raw = json.loads(FIXTURE.read_text(encoding="utf-8"))
     resp = ChatResponse(**raw)
     assert resp.text
-    assert len(resp.resources) >= 2
+    assert len(resp.resources) == 3
     assert any(r.format.upper() == "GEOJSON" for r in resp.resources)
 
 

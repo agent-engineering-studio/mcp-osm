@@ -14,7 +14,7 @@ class Resource(BaseModel):
     """A resource produced by an agent. Mirrors ckan-mcp-agent.api.Resource."""
 
     name: str
-    url: str | None = None
+    url: str | None = None  # optional: absent for inline resources (e.g. rendered HTML maps)
     format: str
     content: str | None = None
 
@@ -34,7 +34,11 @@ class ChatRequest(BaseModel):
 
 class ComposeMapRequest(BaseModel):
     """Body of POST /compose-map. Accepts the same shape as ChatResponse plus
-    optional rendering hints."""
+    optional rendering hints.
+
+    Note: ``resources`` is REQUIRED here (no default), unlike ``ChatResponse.resources``
+    which defaults to []. A /compose-map call without any resources is meaningless,
+    so the asymmetry is intentional."""
 
     text: str = ""
     resources: list[Resource]
