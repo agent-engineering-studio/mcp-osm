@@ -1,70 +1,82 @@
-.PHONY: \
-  help \
+.PHONY: help \
   mcp-install mcp-test mcp-run mcp-inspector \
-  agent-build agent-run \
-  build up up-cpu up-gpu up-dev-cpu up-dev-gpu down logs \
-  pull-models \
-  deploy-azure deploy-azure-ps
+  agent-install agent-test agent-run \
+  build up up-cpu up-gpu up-ghcr down logs \
+  build-ollama refresh-ollama pull-models \
+  smoke \
+  deploy-azure destroy-azure setup-oidc
 
 DC = docker compose
 
 help:  ## Show this help
-	@awk 'BEGIN {FS = ":.*##"} /^[a-zA-Z_-]+:.*##/ {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+	@awk 'BEGIN {FS = ":.*##"} /^[a-zA-Z_-]+:.*##/ {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-# ── Python MCP ────────────────────────────────────────────────────────────────
-mcp-install:  ## Install osm-mcp with dev extras
+# ── MCP server (Python) ─────────────────────────────────────────────────
+mcp-install:    ## Install osm-mcp with dev extras
 	cd osm-mcp && pip install -e ".[dev]"
 
-mcp-test:  ## Run pytest on osm-mcp
+mcp-test:       ## Run pytest on osm-mcp
 	cd osm-mcp && pytest -v
 
-mcp-run:  ## Run osm-mcp locally in stdio mode (for Claude Desktop/Code)
-	cd osm-mcp && MCP_TRANSPORT=stdio python -m osm_mcp.server
-
-mcp-run-sse:  ## Run osm-mcp locally in SSE mode on :8080
+mcp-run:        ## Run osm-mcp locally (SSE on :8080)
 	cd osm-mcp && MCP_TRANSPORT=sse MCP_HOST=0.0.0.0 MCP_PORT=8080 python -m osm_mcp.server
 
-mcp-inspector:  ## Open the MCP Inspector against the stdio server
+mcp-inspector:  ## Open the MCP Inspector against osm-mcp (stdio)
 	cd osm-mcp && npx @modelcontextprotocol/inspector python -m osm_mcp.server
 
-# ── .NET Agent ────────────────────────────────────────────────────────────────
-agent-build:  ## dotnet restore + build
-	cd osm-agent && dotnet build -c Release
+# ── Agent (Python) ──────────────────────────────────────────────────────
+agent-install:  ## Install osm-mcp-agent with dev + claude + azure extras
+	cd osm-mcp-agent && pip install --pre -e ".[dev,claude,azure]"
 
-agent-run:  ## Run the agent locally (needs MCP on :8080 and Ollama on :11434)
-	cd osm-agent && dotnet run
+agent-test:     ## Run pytest on osm-mcp-agent
+	cd osm-mcp-agent && pytest -v
 
-# ── Docker ────────────────────────────────────────────────────────────────────
-build:  ## Build all docker images (all profiles)
-	$(DC) --profile prod --profile gpu --profile cpu build
+agent-run:      ## Run the agent locally (REST :8002 + MCP :8003)
+	cd osm-mcp-agent && python -m osm_agent.main
 
-up:  ## Full stack, Ollama on host (via host.docker.internal)
-	$(DC) --profile prod up --build -d
+# ── Docker ──────────────────────────────────────────────────────────────
+build:          ## Build all docker images
+	$(DC) build
 
-up-cpu:  ## Full stack + Ollama CPU-only in container
-	$(DC) --profile prod --profile cpu up --build -d
+up:             ## Up the stack (no Ollama profile — assumes Ollama on host or claude/foundry)
+	$(DC) up --build -d
 
-up-gpu:  ## Full stack + Ollama with NVIDIA GPU in container
-	$(DC) --profile prod --profile gpu up --build -d
+up-cpu:         ## Up the stack with Ollama CPU container
+	$(DC) --profile cpu up --build -d
 
-up-dev-cpu:  ## Only Ollama CPU container (for local dev of the agent)
-	$(DC) --profile cpu up -d
+up-gpu:         ## Up the stack with Ollama GPU container
+	$(DC) --profile gpu up --build -d
 
-up-dev-gpu:  ## Only Ollama GPU container (for local dev of the agent)
-	$(DC) --profile gpu up -d
+up-ghcr:        ## Up using pre-built GHCR images (no local build)
+	$(DC) -f docker-compose.ghcr.yml up -d
 
-down:  ## Stop & remove everything across profiles
-	$(DC) --profile prod --profile gpu --profile cpu down
+down:           ## Stop & remove everything
+	$(DC) --profile gpu --profile cpu down
 
-logs:  ## Tail logs for both app services
-	$(DC) logs -f osm-mcp osm-agent
+logs:           ## Tail logs of osm-mcp + agent
+	$(DC) logs -f osm-mcp osm-mcp-agent
 
-pull-models:  ## Force re-pull of Ollama models on the host
-	ollama pull qwen2.5:7b
+# ── Ollama image ────────────────────────────────────────────────────────
+build-ollama:   ## Build the Ollama image with model baked
+	docker build -t ghcr.io/agent-engineering-studio/osm-mcp-ollama:latest infra/ollama
 
-# ── Azure deploy ──────────────────────────────────────────────────────────────
-deploy-azure:  ## Deploy to Azure Container Apps (bash)
-	bash scripts/deploy-azure.sh
+refresh-ollama: build-ollama  ## Rebuild + recreate the Ollama container
+	$(DC) --profile cpu up -d --force-recreate ollama-cpu
 
-deploy-azure-ps:  ## Deploy to Azure Container Apps (PowerShell)
-	pwsh scripts/deploy-azure.ps1
+pull-models:    ## Pull base Ollama model on the host
+	ollama pull qwen2.5:7b-instruct
+
+# ── Smoke / integration ─────────────────────────────────────────────────
+smoke:          ## Up stack + run newman against /compose-map and friends
+	$(DC) up -d
+	@bash requests/postman/test-agent-chat.sh
+
+# ── Azure ───────────────────────────────────────────────────────────────
+deploy-azure:   ## Deploy to Azure Container Apps via Bicep (bash)
+	bash infra/scripts/deploy.sh
+
+destroy-azure:  ## Destroy the resource group (irreversible)
+	bash infra/scripts/destroy.sh
+
+setup-oidc:     ## Configure GitHub OIDC federation for deploy-azure.yml
+	bash infra/scripts/setup-github-oidc.sh
