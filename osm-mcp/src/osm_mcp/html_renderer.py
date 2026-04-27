@@ -45,11 +45,11 @@ def render_map(
     """Render a Leaflet HTML map embedding all layers inline."""
     payload = [
         {
-            "name": l.name,
-            "geojson": l.geojson,
-            "style": l.style or _DEFAULT_STYLE,
+            "name": layer.name,
+            "geojson": layer.geojson,
+            "style": layer.style or _DEFAULT_STYLE,
         }
-        for l in layers
+        for layer in layers
     ]
     template = _env.get_template("map.html.j2")
     return template.render(

@@ -1,5 +1,4 @@
 """Unit tests for geojson_builder — pure-Python validation, no I/O."""
-import json
 
 import pytest
 

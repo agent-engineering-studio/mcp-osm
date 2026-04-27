@@ -1,5 +1,4 @@
 """HTML rendering tests — verify output is valid, self-contained, and embeds GeoJSON."""
-import json
 
 import pytest
 

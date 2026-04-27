@@ -3,8 +3,14 @@
 from __future__ import annotations
 
 import json
+import uuid as _uuid
 from typing import Any
 
+from mcp.types import EmbeddedResource, TextContent, TextResourceContents
+from pydantic import AnyUrl
+
+from osm_mcp import geojson_builder as _gjb
+from osm_mcp import html_renderer as _hr
 from osm_mcp import osm_client
 
 
@@ -242,14 +248,6 @@ async def analyze_commute(
 #  Map rendering — added in Task 6
 # ══════════════════════════════════════════════════════════════════════════
 
-import uuid as _uuid
-
-from mcp.types import EmbeddedResource, TextContent, TextResourceContents
-from pydantic import AnyUrl
-
-from osm_mcp import geojson_builder as _gjb
-from osm_mcp import html_renderer as _hr
-
 
 def _summary_block(payload: dict[str, Any]) -> TextContent:
     """Wrap a JSON-serialisable summary as a TextContent block."""
@@ -305,10 +303,10 @@ async def render_multi_layer_map(
     palette = _gjb.assign_layer_styles(len(layers))
     map_layers: list[_hr.MapLayer] = []
     feat_counts: list[dict[str, Any]] = []
-    for i, l in enumerate(layers):
-        fc = _gjb.parse_geojson(l["geojson"])
-        style = l.get("style") or palette[i]
-        name = l.get("name") or f"Layer {i + 1}"
+    for i, layer in enumerate(layers):
+        fc = _gjb.parse_geojson(layer["geojson"])
+        style = layer.get("style") or palette[i]
+        name = layer.get("name") or f"Layer {i + 1}"
         map_layers.append(_hr.MapLayer(name=name, geojson=fc, style=style))
         feat_counts.append({"name": name, "features": len(fc["features"])})
 
@@ -374,11 +372,11 @@ async def compose_map_from_resources(
     summary = {
         "type": "composed_map",
         "layer_count": len(layers),
-        "total_features": sum(len(l.geojson.get("features", [])) for l in layers),
+        "total_features": sum(len(layer.geojson.get("features", [])) for layer in layers),
         "skipped": skipped,
         "layers": [
-            {"name": l.name, "features": len(l.geojson.get("features", []))}
-            for l in layers
+            {"name": layer.name, "features": len(layer.geojson.get("features", []))}
+            for layer in layers
         ],
     }
     html = _hr.render_map(

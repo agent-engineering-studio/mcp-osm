@@ -17,11 +17,12 @@ import re
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
-from fastapi import FastAPI, HTTPException
+import httpx
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 
 from .config import Settings, get_settings
-from .contracts import ChatRequest, ChatResponse, Resource
+from .contracts import ChatRequest, ChatResponse, ComposeMapRequest, Resource
 from .factory import AgentSession
 
 log = logging.getLogger("osm-agent.api")
@@ -125,9 +126,6 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
 
 
 # ── Composition endpoint (Task 9) ─────────────────────────────────────────
-import httpx
-
-from .contracts import ComposeMapRequest
 
 
 def _mcp_content_to_chat_response(blocks: list[dict]) -> ChatResponse:
@@ -178,7 +176,7 @@ def _parse_streamable_http_response(resp: "httpx.Response") -> dict:
                 if payload:
                     import json as _json
                     return _json.loads(payload)
-        raise HTTPException(502, f"empty SSE stream from osm-mcp")
+        raise HTTPException(502, "empty SSE stream from osm-mcp")
     # Fallback: try to parse as JSON anyway
     return resp.json()
 
@@ -258,8 +256,6 @@ async def compose_map(req: ComposeMapRequest) -> ChatResponse:
 
 
 # ── GeoJSON upload endpoint (Task 10) ─────────────────────────────────────
-from fastapi import File, Form, UploadFile
-
 _GEOJSON_MAX_INLINE = 50_000  # bytes pasted into the prompt
 
 

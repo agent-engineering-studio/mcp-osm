@@ -56,7 +56,7 @@ def test_azure_foundry_returns_foundry_client():
         azure_ai_model_deployment_name="gpt-4o-mini",
     )
     with patch("agent_framework_foundry.FoundryChatClient") as mock_fc, \
-         patch("azure.identity.aio.DefaultAzureCredential") as mock_cred:
+         patch("azure.identity.aio.DefaultAzureCredential"):
         build_chat_client(s)
     mock_fc.assert_called_once()
     kw = mock_fc.call_args.kwargs
