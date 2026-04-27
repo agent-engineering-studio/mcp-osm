@@ -122,3 +122,68 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
         yield b"event: done\ndata: {}\n\n"
 
     return StreamingResponse(gen(), media_type="text/event-stream")
+
+
+# ── Composition endpoint (Task 9) ─────────────────────────────────────────
+import httpx
+
+from .contracts import ComposeMapRequest
+
+
+def _mcp_content_to_chat_response(blocks: list[dict]) -> ChatResponse:
+    """Translate osm-mcp tool result content blocks into the ChatResponse shape.
+
+    Heuristic: text blocks become `text` (joined), resource blocks become
+    Resource entries with format inferred from mimeType. Maps that ended in
+    error return the error JSON in `text` and no resources.
+    """
+    text_parts: list[str] = []
+    resources: list[Resource] = []
+    for block in blocks:
+        btype = block.get("type")
+        if btype == "text":
+            text_parts.append(block.get("text", ""))
+        elif btype == "resource":
+            res = block.get("resource") or {}
+            mime = res.get("mimeType", "")
+            fmt = "HTML" if "html" in mime else (
+                mime.split("/")[-1].upper() if mime else "BIN"
+            )
+            resources.append(Resource(
+                name=(res.get("uri") or "").split("/")[-1] or "map",
+                url=res.get("uri"),
+                format=fmt,
+                content=res.get("text"),
+            ))
+    return ChatResponse(text="\n".join(text_parts).strip(), resources=resources)
+
+
+@app.post("/compose-map", response_model=ChatResponse)
+async def compose_map(req: ComposeMapRequest) -> ChatResponse:
+    """Deterministic ckan→osm composition. Calls osm-mcp directly via httpx
+    (no LLM cost, no token usage). Accepts the ckan-mcp-agent ChatResponse
+    shape and returns the same shape with an HTML resource added.
+    """
+    if _settings is None:
+        raise HTTPException(503, "Settings not initialised")
+
+    payload = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+            "name": "compose_map_from_resources",
+            "arguments": req.model_dump(exclude_none=True),
+        },
+    }
+    async with httpx.AsyncClient(timeout=60) as client:
+        resp = await client.post(_settings.mcp_server_url, json=payload)
+    if resp.status_code != 200:
+        raise HTTPException(502, f"osm-mcp returned {resp.status_code}: {resp.text[:300]}")
+
+    data = resp.json()
+    if "error" in data:
+        raise HTTPException(502, f"osm-mcp error: {data['error']}")
+
+    blocks = (data.get("result") or {}).get("content") or []
+    return _mcp_content_to_chat_response(blocks)
