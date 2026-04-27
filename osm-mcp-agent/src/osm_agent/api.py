@@ -187,3 +187,37 @@ async def compose_map(req: ComposeMapRequest) -> ChatResponse:
 
     blocks = (data.get("result") or {}).get("content") or []
     return _mcp_content_to_chat_response(blocks)
+
+
+# ── GeoJSON upload endpoint (Task 10) ─────────────────────────────────────
+from fastapi import File, Form, UploadFile
+
+_GEOJSON_MAX_INLINE = 50_000  # bytes pasted into the prompt
+
+
+@app.post("/chat/with-geojson", response_model=ChatResponse)
+async def chat_with_geojson(
+    message: str = Form(...),
+    geojson_file: UploadFile = File(...),
+) -> ChatResponse:
+    """Accept a multipart upload with a GeoJSON file and a message. Prepends
+    the file content to the agent prompt so the LLM can call
+    render_geojson_map directly with the user's data."""
+    if _session is None:
+        raise HTTPException(503, "Agent session not initialised")
+
+    raw = (await geojson_file.read()).decode("utf-8", errors="replace")
+    truncated = len(raw) > _GEOJSON_MAX_INLINE
+    embed = raw[:_GEOJSON_MAX_INLINE]
+
+    enriched = (
+        f"USER QUERY: {message}\n\n"
+        f"ATTACHED GEOJSON (file: {geojson_file.filename}"
+        f"{', truncated' if truncated else ''}):\n"
+        f"```geojson\n{embed}\n```\n\n"
+        "If the user asks for a map, call render_geojson_map with this GeoJSON."
+        + _RESOURCES_MARKER_PROMPT
+    )
+    text_raw = await _session.run(enriched)
+    text, resources = _parse_resources_block(text_raw)
+    return ChatResponse(text=text, resources=resources)
