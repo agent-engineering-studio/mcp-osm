@@ -18,7 +18,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from osm_mcp.config import settings
 
-_TEMPLATE_DIR = Path(__file__).resolve().parents[2] / "templates"
+_TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
 _env = Environment(
     loader=FileSystemLoader(_TEMPLATE_DIR),
     autoescape=select_autoescape(["html", "j2"]),

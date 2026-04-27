@@ -25,7 +25,7 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
           image: image
           resources: { cpu: json('0.5'), memory: '1Gi' }
           env: [
-            { name: 'MCP_TRANSPORT', value: 'sse' }
+            { name: 'MCP_TRANSPORT', value: 'streamable-http' }
             { name: 'MCP_HOST', value: '0.0.0.0' }
             { name: 'MCP_PORT', value: '8080' }
             { name: 'OSM_CONTACT_EMAIL', value: osmContactEmail }

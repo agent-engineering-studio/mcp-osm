@@ -64,7 +64,7 @@ module agent 'modules/container-app-agent.bicep' = {
     environmentId: env.outputs.id
     identityId: identity.outputs.id
     image: agentImage
-    mcpUrl: 'https://${mcp.outputs.internalFqdn}/sse'
+    mcpUrl: 'https://${mcp.outputs.internalFqdn}/mcp'
     llmProvider: llmProvider
     anthropicApiKey: anthropicApiKey
     azureAiProjectEndpoint: azureAiProjectEndpoint
