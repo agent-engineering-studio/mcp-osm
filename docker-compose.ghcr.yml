@@ -9,7 +9,7 @@ services:
     ports:
       - "${MCP_PORT:-8080}:8080"
     environment:
-      MCP_TRANSPORT: sse
+      MCP_TRANSPORT: streamable-http
       MCP_HOST: 0.0.0.0
       MCP_PORT: "8080"
       NOMINATIM_URL: ${NOMINATIM_URL:-https://nominatim.openstreetmap.org}
@@ -33,7 +33,7 @@ services:
       CLAUDE_MODEL: ${CLAUDE_MODEL:-claude-sonnet-4-6}
       AZURE_AI_PROJECT_ENDPOINT: ${AZURE_AI_PROJECT_ENDPOINT:-}
       AZURE_AI_MODEL_DEPLOYMENT_NAME: ${AZURE_AI_MODEL_DEPLOYMENT_NAME:-}
-      MCP_SERVER_URL: http://osm-mcp:8080/sse
+      MCP_SERVER_URL: http://osm-mcp:8080/mcp
       MCP_SERVER_NAME: osm-mcp
       MCP_APPROVAL_MODE: ${MCP_APPROVAL_MODE:-never_require}
       API_HOST: 0.0.0.0

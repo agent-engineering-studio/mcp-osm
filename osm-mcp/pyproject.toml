@@ -34,5 +34,8 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/osm_mcp"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"src/osm_mcp/templates" = "osm_mcp/templates"
+
 [tool.ruff]
 line-length = 100

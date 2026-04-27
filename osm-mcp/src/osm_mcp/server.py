@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from mcp.server.fastmcp import FastMCP
-from mcp.server.transport_security import TransportSecuritySettings
 
 from osm_mcp import tools
 from osm_mcp.config import settings
@@ -20,7 +19,7 @@ mcp = FastMCP(
     ),
     host=settings.MCP_HOST,
     port=settings.MCP_PORT,
-    transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
+    streamable_http_path="/mcp",
 )
 
 
@@ -272,10 +271,14 @@ def main() -> None:
     """Run the MCP server.
 
     Transport is selected via the MCP_TRANSPORT env var:
-      - "stdio" (default) — for Claude Desktop / local agents
-      - "sse"             — for Docker / remote HTTP access (port from MCP_PORT)
+      - "stdio" (default)     — for Claude Desktop / local agents
+      - "sse"                 — legacy HTTP SSE on /sse
+      - "streamable-http"     — modern HTTP transport on /mcp (preferred for
+                                clients using MCPStreamableHTTPTool)
     """
-    if settings.MCP_TRANSPORT == "sse":
+    if settings.MCP_TRANSPORT == "streamable-http":
+        mcp.run(transport="streamable-http")
+    elif settings.MCP_TRANSPORT == "sse":
         mcp.run(transport="sse")
     else:
         mcp.run(transport="stdio")

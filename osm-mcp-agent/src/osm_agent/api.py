@@ -158,6 +158,82 @@ def _mcp_content_to_chat_response(blocks: list[dict]) -> ChatResponse:
     return ChatResponse(text="\n".join(text_parts).strip(), resources=resources)
 
 
+def _parse_streamable_http_response(resp: "httpx.Response") -> dict:
+    """Parse a streamable-HTTP MCP response.
+
+    The server may reply as JSON (Content-Type: application/json) or as
+    Server-Sent Events (Content-Type: text/event-stream) depending on whether
+    the tool call streams. For a one-shot tools/call we expect a single
+    SSE 'message' event whose data is the JSON-RPC envelope, OR a plain JSON
+    body. Handle both.
+    """
+    ctype = resp.headers.get("content-type", "")
+    if ctype.startswith("application/json"):
+        return resp.json()
+    if "text/event-stream" in ctype:
+        # Parse the first SSE 'message' event's data line.
+        for line in resp.text.splitlines():
+            if line.startswith("data:"):
+                payload = line[5:].strip()
+                if payload:
+                    import json as _json
+                    return _json.loads(payload)
+        raise HTTPException(502, f"empty SSE stream from osm-mcp")
+    # Fallback: try to parse as JSON anyway
+    return resp.json()
+
+
+async def _mcp_streamable_call(
+    base_url: str, method: str, params: dict | None = None, request_id: int = 1
+) -> dict:
+    """Initialize an MCP streamable-HTTP session, call one method, return result.
+
+    The MCP streamable-HTTP transport requires:
+      1. POST /mcp with method='initialize' (server returns session id in Mcp-Session-Id)
+      2. POST /mcp with the same Mcp-Session-Id and method='notifications/initialized'
+      3. POST /mcp with the same Mcp-Session-Id and the actual method (tools/call etc.)
+
+    This helper performs the 3-step dance for a single tool call.
+    """
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream",
+    }
+    async with httpx.AsyncClient(timeout=60) as client:
+        # 1. initialize
+        init = {
+            "jsonrpc": "2.0", "id": 0, "method": "initialize",
+            "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "osm-mcp-agent", "version": "0.1.0"},
+            },
+        }
+        r1 = await client.post(base_url, json=init, headers=headers)
+        if r1.status_code != 200:
+            raise HTTPException(502, f"osm-mcp initialize {r1.status_code}: {r1.text[:300]}")
+        session_id = r1.headers.get("Mcp-Session-Id") or r1.headers.get("mcp-session-id")
+        sess_headers = dict(headers)
+        if session_id:
+            sess_headers["Mcp-Session-Id"] = session_id
+
+        # 2. initialized notification (no id, no response expected)
+        await client.post(
+            base_url,
+            json={"jsonrpc": "2.0", "method": "notifications/initialized"},
+            headers=sess_headers,
+        )
+
+        # 3. real call
+        body = {"jsonrpc": "2.0", "id": request_id, "method": method}
+        if params is not None:
+            body["params"] = params
+        r3 = await client.post(base_url, json=body, headers=sess_headers)
+        if r3.status_code != 200:
+            raise HTTPException(502, f"osm-mcp {method} {r3.status_code}: {r3.text[:300]}")
+        return _parse_streamable_http_response(r3)
+
+
 @app.post("/compose-map", response_model=ChatResponse)
 async def compose_map(req: ComposeMapRequest) -> ChatResponse:
     """Deterministic ckan→osm composition. Calls osm-mcp directly via httpx
@@ -167,24 +243,16 @@ async def compose_map(req: ComposeMapRequest) -> ChatResponse:
     if _settings is None:
         raise HTTPException(503, "Settings not initialised")
 
-    payload = {
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "tools/call",
-        "params": {
+    data = await _mcp_streamable_call(
+        base_url=_settings.mcp_server_url,
+        method="tools/call",
+        params={
             "name": "compose_map_from_resources",
             "arguments": req.model_dump(exclude_none=True),
         },
-    }
-    async with httpx.AsyncClient(timeout=60) as client:
-        resp = await client.post(_settings.mcp_server_url, json=payload)
-    if resp.status_code != 200:
-        raise HTTPException(502, f"osm-mcp returned {resp.status_code}: {resp.text[:300]}")
-
-    data = resp.json()
+    )
     if "error" in data:
         raise HTTPException(502, f"osm-mcp error: {data['error']}")
-
     blocks = (data.get("result") or {}).get("content") or []
     return _mcp_content_to_chat_response(blocks)
 
