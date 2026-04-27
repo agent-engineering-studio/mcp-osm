@@ -1,0 +1,23 @@
+{
+  "text": "Found 3 datasets about public transport in Tuscany.",
+  "resources": [
+    {
+      "name": "Bus stops Florence",
+      "url": "https://dati.toscana.it/dataset/example/fermate.geojson",
+      "format": "GEOJSON",
+      "content": "{\"type\":\"FeatureCollection\",\"features\":[{\"type\":\"Feature\",\"geometry\":{\"type\":\"Point\",\"coordinates\":[11.255,43.769]},\"properties\":{\"name\":\"Stazione SMN\"}},{\"type\":\"Feature\",\"geometry\":{\"type\":\"Point\",\"coordinates\":[11.262,43.776]},\"properties\":{\"name\":\"Piazza San Marco\"}}]}"
+    },
+    {
+      "name": "Tramway lines",
+      "url": "https://dati.toscana.it/dataset/example/tramvia.geojson",
+      "format": "GEOJSON",
+      "content": "{\"type\":\"FeatureCollection\",\"features\":[{\"type\":\"Feature\",\"geometry\":{\"type\":\"LineString\",\"coordinates\":[[11.20,43.77],[11.30,43.78]]},\"properties\":{\"line\":\"T1\"}}]}"
+    },
+    {
+      "name": "Schedule PDF",
+      "url": "https://dati.toscana.it/dataset/example/schedule.pdf",
+      "format": "PDF",
+      "content": null
+    }
+  ]
+}

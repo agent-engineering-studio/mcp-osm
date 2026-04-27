@@ -206,6 +206,68 @@ async def osm_health() -> str:
     return json.dumps({**checks, "status": status})
 
 
+@mcp.tool()
+async def render_geojson_map(
+    geojson: dict | str,
+    title: str | None = None,
+    center: list[float] | None = None,
+    zoom: int | None = None,
+):
+    """Render a single-layer Leaflet HTML map from a GeoJSON Feature/FeatureCollection.
+
+    Returns multi-content: text summary + HTML resource (mimeType=text/html).
+    Compatible viewers (Claude Desktop, VS Code MCP) render the HTML inline.
+
+    Args:
+        geojson: A GeoJSON Feature, FeatureCollection, Geometry, or JSON string.
+        title: Optional map title shown in the legend.
+        center: Optional initial [lat, lon]; auto-fits bounds if omitted.
+        zoom: Optional initial zoom (1-19); auto-fits if omitted.
+    """
+    return await tools.render_geojson_map(geojson, title, center, zoom)
+
+
+@mcp.tool()
+async def render_multi_layer_map(
+    layers: list[dict],
+    title: str | None = None,
+    center: list[float] | None = None,
+    zoom: int | None = None,
+):
+    """Render an HTML map with multiple GeoJSON layers, each with its own
+    name and (optional) style. Auto-assigns colors if `style` is omitted.
+
+    Args:
+        layers: List of {"name": str, "geojson": dict, "style"?: dict}.
+        title, center, zoom: see render_geojson_map.
+    """
+    return await tools.render_multi_layer_map(layers, title, center, zoom)
+
+
+@mcp.tool()
+async def compose_map_from_resources(
+    text: str,
+    resources: list[dict],
+    title: str | None = None,
+    center: list[float] | None = None,
+    zoom: int | None = None,
+):
+    """Take a CKAN-agent-style payload (text + resources list with embedded
+    GeoJSON content) and render a multi-layer Leaflet map.
+
+    Filters resources where format=='GEOJSON' (case-insensitive) with non-empty
+    content. Non-GeoJSON resources are listed in summary.skipped[].
+    Compatible end-to-end with the output of ckan-mcp-agent's POST /chat.
+    Stateless, deterministic, no LLM involvement.
+
+    Args:
+        text: Source narrative (used as title fallback).
+        resources: List of resource dicts (name, url, format, content).
+        title, center, zoom: see render_geojson_map.
+    """
+    return await tools.compose_map_from_resources(text, resources, title, center, zoom)
+
+
 def main() -> None:
     """Run the MCP server.
 

@@ -236,3 +236,155 @@ async def analyze_commute(
             "modes": results,
         }
     )
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  Map rendering — added in Task 6
+# ══════════════════════════════════════════════════════════════════════════
+
+import uuid as _uuid
+
+from mcp.types import EmbeddedResource, TextContent, TextResourceContents
+from pydantic import AnyUrl
+
+from osm_mcp import geojson_builder as _gjb
+from osm_mcp import html_renderer as _hr
+
+
+def _summary_block(payload: dict[str, Any]) -> TextContent:
+    """Wrap a JSON-serialisable summary as a TextContent block."""
+    return TextContent(type="text", text=json.dumps(payload, ensure_ascii=False))
+
+
+def _html_block(html: str, kind: str = "map") -> EmbeddedResource:
+    """Wrap an HTML string as an EmbeddedResource with mimeType=text/html."""
+    return EmbeddedResource(
+        type="resource",
+        resource=TextResourceContents(
+            uri=AnyUrl(f"osm://maps/{kind}-{_uuid.uuid4().hex[:8]}"),
+            mimeType="text/html",
+            text=html,
+        ),
+    )
+
+
+async def render_geojson_map(
+    geojson: dict[str, Any] | str,
+    title: str | None = None,
+    center: list[float] | None = None,
+    zoom: int | None = None,
+) -> list[TextContent | EmbeddedResource]:
+    """Render a single-layer Leaflet HTML map from a GeoJSON value.
+
+    Returns multi-content: text summary + HTML resource (mimeType=text/html).
+    """
+    fc = _gjb.parse_geojson(geojson)
+    style = _gjb.assign_layer_styles(1)[0]
+    layer = _hr.MapLayer(name=title or "Layer", geojson=fc, style=style)
+    bounds = _gjb.compute_bounds(fc)
+    summary = {
+        "type": "single_layer_map",
+        "feature_count": len(fc["features"]),
+        "bounds": list(bounds),
+        "title": title,
+    }
+    html = _hr.render_map(
+        [layer], title=title,
+        center=tuple(center) if center else None, zoom=zoom,
+    )
+    return [_summary_block(summary), _html_block(html, kind="single")]
+
+
+async def render_multi_layer_map(
+    layers: list[dict[str, Any]],
+    title: str | None = None,
+    center: list[float] | None = None,
+    zoom: int | None = None,
+) -> list[TextContent | EmbeddedResource]:
+    """Render an HTML map with multiple GeoJSON layers, each named and styled."""
+    palette = _gjb.assign_layer_styles(len(layers))
+    map_layers: list[_hr.MapLayer] = []
+    feat_counts: list[dict[str, Any]] = []
+    for i, l in enumerate(layers):
+        fc = _gjb.parse_geojson(l["geojson"])
+        style = l.get("style") or palette[i]
+        name = l.get("name") or f"Layer {i + 1}"
+        map_layers.append(_hr.MapLayer(name=name, geojson=fc, style=style))
+        feat_counts.append({"name": name, "features": len(fc["features"])})
+
+    summary = {
+        "type": "multi_layer_map",
+        "layer_count": len(map_layers),
+        "total_features": sum(c["features"] for c in feat_counts),
+        "layers": feat_counts,
+    }
+    html = _hr.render_map(map_layers, title=title,
+                          center=tuple(center) if center else None, zoom=zoom)
+    return [_summary_block(summary), _html_block(html, kind="multi")]
+
+
+async def compose_map_from_resources(
+    text: str,
+    resources: list[dict[str, Any]],
+    title: str | None = None,
+    center: list[float] | None = None,
+    zoom: int | None = None,
+) -> list[TextContent | EmbeddedResource]:
+    """Take a CKAN-agent-style payload and render a multi-layer map.
+
+    Filters resources where format=='GEOJSON' (case-insensitive) with non-empty
+    content. Non-GeoJSON entries are reported in summary.skipped[]. Stateless,
+    deterministic, no LLM.
+    """
+    palette_size = sum(
+        1 for r in resources
+        if (r.get("format") or "").upper() == "GEOJSON" and r.get("content")
+    )
+    palette = _gjb.assign_layer_styles(max(palette_size, 1))
+
+    layers: list[_hr.MapLayer] = []
+    skipped: list[dict[str, Any]] = []
+    pi = 0
+    for r in resources:
+        fmt = (r.get("format") or "").upper()
+        if fmt != "GEOJSON" or not r.get("content"):
+            skipped.append({
+                "name": r.get("name"), "format": fmt or None,
+                "url": r.get("url"),
+            })
+            continue
+        try:
+            fc = _gjb.parse_geojson(r["content"])
+        except ValueError as exc:
+            skipped.append({"name": r.get("name"), "format": fmt, "error": str(exc)})
+            continue
+        layers.append(_hr.MapLayer(
+            name=r.get("name") or f"Layer {pi + 1}",
+            geojson=fc,
+            style=palette[pi],
+        ))
+        pi += 1
+
+    if not layers:
+        return [_summary_block({
+            "error": "no valid GeoJSON layers found",
+            "skipped": skipped,
+        })]
+
+    summary = {
+        "type": "composed_map",
+        "layer_count": len(layers),
+        "total_features": sum(len(l.geojson.get("features", [])) for l in layers),
+        "skipped": skipped,
+        "layers": [
+            {"name": l.name, "features": len(l.geojson.get("features", []))}
+            for l in layers
+        ],
+    }
+    html = _hr.render_map(
+        layers,
+        title=title or (text[:80] if text else "Composed Map"),
+        center=tuple(center) if center else None,
+        zoom=zoom,
+    )
+    return [_summary_block(summary), _html_block(html, kind="composed")]
