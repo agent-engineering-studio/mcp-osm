@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{{ title|e or "OSM Map" }}</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+  <style>
+    body { margin: 0; font-family: system-ui, sans-serif; }
+    #map { height: 100vh; width: 100%; }
+    .legend { background: #fff; padding: 8px 10px; border-radius: 4px;
+              box-shadow: 0 0 6px rgba(0,0,0,.2); font: 12px sans-serif; max-width: 240px; }
+    .legend i { width: 12px; height: 12px; display: inline-block;
+                margin-right: 6px; vertical-align: middle; border-radius: 2px; }
+    .legend b { display: block; margin-bottom: 4px; }
+  </style>
+</head>
+<body>
+<div id="map"></div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script>
+  const map = L.map('map'){% if center %}.setView([{{ center[0] }}, {{ center[1] }}], {{ zoom or default_zoom }}){% endif %};
+  L.tileLayer({{ tile_url|tojson }}, {
+    attribution: {{ attribution|tojson }},
+    maxZoom: 19
+  }).addTo(map);
+
+  const layers = {{ layers_json|safe }};
+  const bounds = L.latLngBounds([]);
+  const overlays = {};
+  layers.forEach(l => {
+    const layer = L.geoJSON(l.geojson, {
+      style: l.style,
+      pointToLayer: (f, latlng) => L.circleMarker(latlng, l.style),
+      onEachFeature: (f, lyr) => {
+        const props = f.properties || {};
+        const html = Object.entries(props).slice(0, 8).map(([k, v]) =>
+          `<b>${k}</b>: ${String(v).slice(0, 80)}`).join('<br>');
+        if (html) lyr.bindPopup(html);
+      }
+    }).addTo(map);
+    overlays[l.name] = layer;
+    if (layer.getBounds && layer.getBounds().isValid()) bounds.extend(layer.getBounds());
+  });
+  if (bounds.isValid() && !{{ "true" if center else "false" }}) {
+    map.fitBounds(bounds.pad(0.1));
+  }
+
+  const legend = L.control({position: 'bottomright'});
+  legend.onAdd = () => {
+    const div = L.DomUtil.create('div', 'legend');
+    div.innerHTML = '<b>' + {{ (title|e or "Layers")|tojson }} + '</b>' +
+      layers.map(l => `<i style="background:${l.style.color}"></i>${l.name}`).join('<br>');
+    return div;
+  };
+  legend.addTo(map);
+  L.control.layers(null, overlays, {collapsed: false}).addTo(map);
+</script>
+</body>
+</html>
