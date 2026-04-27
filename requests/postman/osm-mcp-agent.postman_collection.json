@@ -1,0 +1,143 @@
+{
+  "info": {
+    "_postman_id": "osm-mcp-agent-collection",
+    "name": "osm-mcp-agent",
+    "description": "Postman collection mirroring requests/agent-chat.http for osm-mcp-agent. Run via newman (see test-agent-chat.sh).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "host", "value": "http://localhost:8002" },
+    { "key": "mcp_host", "value": "http://localhost:8003" },
+    { "key": "osm_mcp_host", "value": "http://localhost:8080" }
+  ],
+  "item": [
+    {
+      "name": "01 - Health",
+      "item": [{
+        "name": "GET /health",
+        "request": { "method": "GET", "url": "{{host}}/health" },
+        "event": [{
+          "listen": "test",
+          "script": { "type": "text/javascript", "exec": [
+            "pm.test('200 OK', () => pm.response.to.have.status(200));",
+            "pm.test('status=ok', () => pm.expect(pm.response.json().status).to.eql('ok'));"
+          ]}
+        }]
+      }]
+    },
+    {
+      "name": "02 - Geocoding & POI",
+      "item": [
+        {
+          "name": "Geocode Colosseo",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{host}}/chat",
+            "body": { "mode": "raw", "raw": "{\"query\":\"Trova il Colosseo a Roma\"}" }
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript",
+            "exec": ["pm.test('200', () => pm.response.to.have.status(200));"] }}]
+        },
+        {
+          "name": "POI nearby (with map)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{host}}/chat",
+            "body": { "mode": "raw", "raw": "{\"query\":\"Mostrami su una mappa i ristoranti entro 500m dal Pantheon\"}" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "03 - Routing",
+      "item": [{
+        "name": "Multimodal route",
+        "request": {
+          "method": "POST",
+          "header": [{ "key": "Content-Type", "value": "application/json" }],
+          "url": "{{host}}/chat",
+          "body": { "mode": "raw", "raw": "{\"query\":\"Calcola il percorso da Piazza Duomo Milano a Stazione Centrale, in auto e in bici, mostra entrambi su mappa\"}" }
+        }
+      }]
+    },
+    {
+      "name": "04 - Streaming",
+      "item": [{
+        "name": "Stream EV stations",
+        "request": {
+          "method": "POST",
+          "header": [{ "key": "Content-Type", "value": "application/json" }],
+          "url": "{{host}}/chat/stream",
+          "body": { "mode": "raw", "raw": "{\"query\":\"Quali stazioni EV ci sono a Bologna?\"}" }
+        }
+      }]
+    },
+    {
+      "name": "05 - GeoJSON upload",
+      "item": [{
+        "name": "Upload track.geojson",
+        "request": {
+          "method": "POST",
+          "url": "{{host}}/chat/with-geojson",
+          "body": {
+            "mode": "formdata",
+            "formdata": [
+              { "key": "message", "value": "Mostrami questa traccia su mappa con ristoranti vicini", "type": "text" },
+              { "key": "geojson_file", "type": "file", "src": [] }
+            ]
+          }
+        }
+      }]
+    },
+    {
+      "name": "06 - Composition (ckan->osm)",
+      "item": [{
+        "name": "POST /compose-map (deterministic)",
+        "request": {
+          "method": "POST",
+          "header": [{ "key": "Content-Type", "value": "application/json" }],
+          "url": "{{host}}/compose-map",
+          "body": { "mode": "raw", "raw": "{\"text\":\"Test\",\"resources\":[{\"name\":\"L1\",\"format\":\"GEOJSON\",\"content\":\"{\\\"type\\\":\\\"FeatureCollection\\\",\\\"features\\\":[{\\\"type\\\":\\\"Feature\\\",\\\"geometry\\\":{\\\"type\\\":\\\"Point\\\",\\\"coordinates\\\":[11.25,43.77]},\\\"properties\\\":{}}]}\"}]}" }
+        },
+        "event": [{ "listen": "test", "script": { "type": "text/javascript",
+          "exec": [
+            "pm.test('200', () => pm.response.to.have.status(200));",
+            "const b = pm.response.json();",
+            "pm.test('has HTML resource', () => pm.expect(b.resources[0].format).to.eql('HTML'));"
+          ] }}]
+      }]
+    },
+    {
+      "name": "07 - MCP surface (agent)",
+      "item": [{
+        "name": "tools/list",
+        "request": {
+          "method": "POST",
+          "header": [
+            { "key": "Content-Type", "value": "application/json" },
+            { "key": "Accept", "value": "application/json" }
+          ],
+          "url": "{{mcp_host}}/mcp",
+          "body": { "mode": "raw", "raw": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}" }
+        }
+      }]
+    },
+    {
+      "name": "08 - MCP raw (osm-mcp)",
+      "item": [{
+        "name": "compose_map_from_resources direct",
+        "request": {
+          "method": "POST",
+          "header": [
+            { "key": "Content-Type", "value": "application/json" },
+            { "key": "Accept", "value": "application/json" }
+          ],
+          "url": "{{osm_mcp_host}}/mcp",
+          "body": { "mode": "raw", "raw": "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"compose_map_from_resources\",\"arguments\":{\"text\":\"test\",\"resources\":[{\"name\":\"test\",\"format\":\"GEOJSON\",\"content\":\"{\\\"type\\\":\\\"FeatureCollection\\\",\\\"features\\\":[]}\"}]}}}" }
+        }
+      }]
+    }
+  ]
+}

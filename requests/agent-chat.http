@@ -1,0 +1,121 @@
+# osm-mcp-agent — REST Client requests
+# https://marketplace.visualstudio.com/items?itemName=humao.rest-client
+
+@host = http://localhost:8002
+@mcp_host = http://localhost:8003
+@osm_mcp_host = http://localhost:8080
+
+### ─── 1. Health & smoke ────────────────────────────────────────────────
+GET {{host}}/health
+
+
+### ─── 2. Geocoding (single tool call) ──────────────────────────────────
+POST {{host}}/chat
+Content-Type: application/json
+
+{ "query": "Trova il Colosseo a Roma" }
+
+
+### ─── 3. POI nearby (find_nearby + render_geojson_map) ────────────────
+POST {{host}}/chat
+Content-Type: application/json
+
+{ "query": "Mostrami su una mappa i ristoranti entro 500m dal Pantheon" }
+
+
+### ─── 4. Routing multimodale ──────────────────────────────────────────
+POST {{host}}/chat
+Content-Type: application/json
+
+{ "query": "Calcola il percorso in auto e in bici da Piazza Duomo Milano a Stazione Centrale, mostra entrambi su mappa" }
+
+
+### ─── 5. Stream SSE ───────────────────────────────────────────────────
+POST {{host}}/chat/stream
+Content-Type: application/json
+
+{ "query": "Quali stazioni di ricarica EV ci sono a Bologna?" }
+
+
+### ─── 6. Upload GeoJSON utente (multipart) ────────────────────────────
+POST {{host}}/chat/with-geojson
+Content-Type: multipart/form-data; boundary=----osm
+
+------osm
+Content-Disposition: form-data; name="message"
+
+Mostrami questa traccia su mappa con i ristoranti vicini ai punti
+------osm
+Content-Disposition: form-data; name="geojson_file"; filename="track.geojson"
+Content-Type: application/geo+json
+
+{"type":"FeatureCollection","features":[{"type":"Feature","geometry":{"type":"LineString","coordinates":[[12.49,41.89],[12.50,41.90]]},"properties":{"name":"My route"}}]}
+------osm--
+
+
+### ─── 7. ⭐ Composizione ckan→osm (deterministico, /compose-map) ──────
+POST {{host}}/compose-map
+Content-Type: application/json
+
+{
+  "text": "Trovati 2 dataset geografici sul trasporto pubblico in Toscana",
+  "resources": [
+    {
+      "name": "Fermate autobus Firenze",
+      "url": "https://dati.toscana.it/dataset/example/fermate.geojson",
+      "format": "GEOJSON",
+      "content": "{\"type\":\"FeatureCollection\",\"features\":[{\"type\":\"Feature\",\"geometry\":{\"type\":\"Point\",\"coordinates\":[11.255,43.769]},\"properties\":{\"name\":\"Stazione SMN\"}}]}"
+    },
+    {
+      "name": "Linee tramviarie",
+      "url": "https://dati.toscana.it/dataset/example/tramvia.geojson",
+      "format": "GEOJSON",
+      "content": "{\"type\":\"FeatureCollection\",\"features\":[{\"type\":\"Feature\",\"geometry\":{\"type\":\"LineString\",\"coordinates\":[[11.20,43.77],[11.30,43.78]]},\"properties\":{\"linea\":\"T1\"}}]}"
+    }
+  ],
+  "title": "Trasporto pubblico Toscana"
+}
+
+
+### ─── 8. MCP surface dell'agent (per coordinator MCP esterni) ─────────
+POST {{mcp_host}}/mcp
+Content-Type: application/json
+Accept: application/json
+
+{ "jsonrpc": "2.0", "id": 1, "method": "tools/list" }
+
+###
+POST {{mcp_host}}/mcp
+Content-Type: application/json
+Accept: application/json
+
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "method": "tools/call",
+  "params": {
+    "name": "OsmAgent",
+    "arguments": { "query": "Mostra i parchi entro 1km da Piazza San Marco a Venezia" }
+  }
+}
+
+
+### ─── 9. MCP server raw (debug osm-mcp senza LLM) ─────────────────────
+POST {{osm_mcp_host}}/mcp
+Content-Type: application/json
+Accept: application/json
+
+{
+  "jsonrpc": "2.0",
+  "id": 3,
+  "method": "tools/call",
+  "params": {
+    "name": "compose_map_from_resources",
+    "arguments": {
+      "text": "Test composizione",
+      "resources": [
+        {"name":"test","format":"GEOJSON","content":"{\"type\":\"FeatureCollection\",\"features\":[]}"}
+      ]
+    }
+  }
+}
