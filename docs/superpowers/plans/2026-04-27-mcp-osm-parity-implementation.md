@@ -122,48 +122,65 @@ Each task commits independently. Following commits unblock CI on the next task. 
 
 - [ ] **Step 1: Create `osm-mcp-agent/pyproject.toml`**
 
-```toml
-[build-system]
-requires = ["setuptools>=68", "wheel"]
-build-backend = "setuptools.build_meta"
+> **Note:** Mirror of `mcp-ckan/ckan-mcp-agent/pyproject.toml` — same build backend (hatchling), same beta-pinned versions (`>=1.0.0b1`), same `[claude]` / `[azure]` extras pattern. The Microsoft Agent Framework is currently published only as pre-release (`1.0.0b*`), so the `>=1.0.0b1` pin is required for pip to resolve.
 
+```toml
 [project]
 name = "osm-mcp-agent"
 version = "0.1.0"
-description = "OpenStreetMap MCP agent — Python rewrite with provider switch (ollama/claude/azure_foundry) and dual REST+MCP surface."
+description = "Microsoft Agent Framework agent that consumes the OSM MCP server and renders Leaflet maps. Provider switch ollama/claude/azure_foundry, dual REST + MCP surface."
+readme = "README.md"
 requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Agent Engineering Studio" }]
 dependencies = [
-  "agent-framework[all] >=0.1.0",
-  "agent-framework-ollama",
-  "agent-framework-anthropic",
-  "agent-framework-foundry",
-  "azure-identity",
-  "fastapi >=0.110",
-  "uvicorn[standard] >=0.27",
-  "pydantic >=2.5",
-  "pydantic-settings >=2.0",
-  "httpx >=0.27",
-  "mcp",
-  "python-multipart",
-  "geojson >=3.0",
+    "agent-framework>=1.0.0b1",
+    "agent-framework-ollama>=1.0.0b1",
+    "mcp>=1.2.0",
+    "openai>=1.50.0",
+    "httpx>=0.27.0",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "pydantic>=2.7.0",
+    "pydantic-settings>=2.3.0",
+    "python-dotenv>=1.0.0",
+    "python-multipart>=0.0.9",
+    "geojson>=3.0.0",
+    "rich>=13.7.0",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest", "pytest-asyncio", "respx", "ruff", "mypy"]
+azure = [
+    "azure-identity>=1.17.0",
+    "agent-framework-foundry>=1.0.0b1",
+]
+claude = [
+    "agent-framework-anthropic>=1.0.0b1",
+]
+dev = [
+    "pytest>=8.2.0",
+    "pytest-asyncio>=0.23.0",
+    "respx>=0.21.0",
+    "ruff>=0.6.0",
+]
 
 [project.scripts]
 osm-agent = "osm_agent.main:run"
 
-[tool.setuptools.packages.find]
-where = ["src"]
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/osm_agent"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-
-[tool.ruff]
-line-length = 110
-target-version = "py311"
 ```
 
 - [ ] **Step 2: Create empty package marker**
@@ -210,10 +227,16 @@ __pycache__
 Run:
 ```bash
 cd osm-mcp-agent
-python -m pip install -e ".[dev]"
+# Install with claude+azure extras to validate the provider switch in Task 7
+python -m pip install -e ".[dev,claude,azure]"
 python -c "import osm_agent; print(osm_agent.__version__)"
 ```
 Expected: `0.1.0` printed.
+
+If pip refuses the `agent-framework*>=1.0.0b1` constraint, pre-releases are blocked on this Python install — re-run with `--pre`:
+```bash
+python -m pip install --pre -e ".[dev,claude,azure]"
+```
 
 - [ ] **Step 6: Commit**
 
@@ -2243,7 +2266,9 @@ RUN apt-get update \
 COPY pyproject.toml ./
 COPY src ./src
 
-RUN pip install --no-cache-dir -e .
+# Install with claude+azure extras so all three providers are available at runtime
+# (provider chosen at startup via LLM_PROVIDER env var).
+RUN pip install --no-cache-dir -e ".[claude,azure]"
 
 EXPOSE 8002 8003
 
