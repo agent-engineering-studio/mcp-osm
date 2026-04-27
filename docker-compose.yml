@@ -1,124 +1,95 @@
-# ── Profiles ──────────────────────────────────────────────────────────────────
-#
-#   dev   → only Ollama (host or container) for local development
-#   prod  → full stack: osm-mcp + osm-agent
-#   gpu   → Ollama with NVIDIA GPU (use alongside dev or prod)
-#   cpu   → Ollama CPU-only (use alongside dev or prod)
-#
-# Quick reference (see Makefile):
-#   docker compose --profile prod up -d              # full stack, Ollama on host
-#   docker compose --profile prod --profile gpu up   # full stack + Ollama GPU
-#   docker compose --profile prod --profile cpu up   # full stack + Ollama CPU
-#   docker compose --profile dev  --profile cpu up   # Ollama only (CPU)
-#
-# ──────────────────────────────────────────────────────────────────────────────
+# docker-compose.yml
+name: osm-mcp
+
+x-ollama-base: &ollama-base
+  image: ${OLLAMA_IMAGE:-ghcr.io/agent-engineering-studio/osm-mcp-ollama:latest}
+  pull_policy: ${OLLAMA_PULL_POLICY:-always}
+  container_name: osm-ollama
+  ports:
+    - "${OLLAMA_PORT:-11434}:11434"
+  volumes:
+    - ollama_data:/root/.ollama
+  restart: unless-stopped
+  healthcheck:
+    test: ["CMD", "ollama", "list"]
+    interval: 15s
+    timeout: 5s
+    retries: 10
+    start_period: 30s
 
 services:
-  # ── OSM MCP server (Python FastMCP, SSE transport) ─────────────────────────
-  osm-mcp:
-    container_name: osm-mcp
-    profiles: [prod]
-    build:
-      context: ./osm-mcp
-      dockerfile: Dockerfile
-    ports:
-      - "8080:8080"
-    environment:
-      - MCP_TRANSPORT=sse
-      - MCP_HOST=0.0.0.0
-      - MCP_PORT=8080
-      - NOMINATIM_URL=${NOMINATIM_URL:-https://nominatim.openstreetmap.org}
-      - OVERPASS_URL=${OVERPASS_URL:-https://overpass-api.de/api/interpreter}
-      - OSRM_URL=${OSRM_URL:-https://router.project-osrm.org}
-      - OSM_USER_AGENT=${OSM_USER_AGENT:-osm-mcp/0.1 (agent-engineering-studio)}
-      - OSM_CONTACT_EMAIL=${OSM_CONTACT_EMAIL:-}
-    healthcheck:
-      test: ["CMD-SHELL", "python -c \"import socket; socket.create_connection(('localhost',8080),3).close()\""]
-      interval: 15s
-      timeout: 5s
-      retries: 5
-      start_period: 20s
-
-  # ── OSM Agent (C# / .NET, Microsoft Agent Framework) ──────────────────────
-  osm-agent:
-    container_name: osm-agent
-    profiles: [prod]
-    build:
-      context: ./osm-agent
-      dockerfile: Dockerfile
-    ports:
-      - "8090:8090"
-    environment:
-      - ASPNETCORE_ENVIRONMENT=${ASPNETCORE_ENVIRONMENT:-Production}
-      # OLLAMA_BASE_URL:
-      #   default        → http://host.docker.internal:11434 (Ollama on host)
-      #   profile gpu    → http://ollama-gpu:11434
-      #   profile cpu    → http://ollama-cpu:11434
-      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
-      - OLLAMA_LLM_MODEL=${OLLAMA_LLM_MODEL:-qwen2.5:7b}
-      - MCP_SERVER_URL=${MCP_SERVER_URL:-http://osm-mcp:8080/sse}
-    depends_on:
-      osm-mcp:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:8090/health"]
-      interval: 30s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-
-  # ── Ollama GPU (NVIDIA) ───────────────────────────────────────────────────
   ollama-gpu:
-    container_name: osm-ollama-gpu
-    profiles: [gpu]
-    build:
-      context: ./infra/ollama
-      dockerfile: Dockerfile
-    environment:
-      - OLLAMA_MODELS=${OLLAMA_MODELS:-qwen2.5:7b}
-    ports:
-      - "127.0.0.1:11434:11434"
-    volumes:
-      - ollama_models:/root/.ollama
-    healthcheck:
-      test: ["CMD-SHELL", "ollama list > /dev/null 2>&1 || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 10
-      start_period: 120s
+    <<: *ollama-base
+    profiles: ["gpu"]
     deploy:
       resources:
         reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
+          devices: [{driver: nvidia, count: all, capabilities: [gpu]}]
 
-  # ── Ollama CPU-only ────────────────────────────────────────────────────────
   ollama-cpu:
-    container_name: osm-ollama-cpu
-    profiles: [cpu]
+    <<: *ollama-base
+    profiles: ["cpu"]
+
+  osm-mcp:
     build:
-      context: ./infra/ollama
+      context: ./osm-mcp
       dockerfile: Dockerfile
-    environment:
-      - OLLAMA_MODELS=${OLLAMA_MODELS:-qwen2.5:7b}
+    image: osm-mcp-server:local
+    container_name: osm-mcp
     ports:
-      - "127.0.0.1:11434:11434"
-    volumes:
-      - ollama_models:/root/.ollama
-    healthcheck:
-      test: ["CMD-SHELL", "ollama list > /dev/null 2>&1 || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 10
-      start_period: 120s
+      - "${MCP_PORT:-8080}:8080"
+    environment:
+      MCP_TRANSPORT: sse
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: "8080"
+      NOMINATIM_URL: ${NOMINATIM_URL:-https://nominatim.openstreetmap.org}
+      OVERPASS_URL: ${OVERPASS_URL:-https://overpass-api.de/api/interpreter}
+      OSRM_URL: ${OSRM_URL:-https://router.project-osrm.org}
+      OSM_USER_AGENT: ${OSM_USER_AGENT:-osm-mcp/0.1 (agent-engineering-studio)}
+      OSM_CONTACT_EMAIL: ${OSM_CONTACT_EMAIL:-}
+      MAP_TILE_URL: ${MAP_TILE_URL:-https://tile.openstreetmap.org/{z}/{x}/{y}.png}
+      MAP_ATTRIBUTION: ${MAP_ATTRIBUTION:-© OpenStreetMap contributors}
+    restart: unless-stopped
+
+  osm-mcp-agent:
+    build:
+      context: ./osm-mcp-agent
+      dockerfile: Dockerfile
+    image: osm-mcp-agent:local
+    container_name: osm-mcp-agent
+    ports:
+      - "${AGENT_PORT:-8002}:8002"
+      - "${AGENT_MCP_PORT:-8003}:8003"
+    environment:
+      LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://osm-ollama:11434}
+      OLLAMA_LLM_MODEL: ${OLLAMA_LLM_MODEL:-qwen2.5:16k}
+      OLLAMA_NUM_CTX: ${OLLAMA_NUM_CTX:-16384}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      CLAUDE_MODEL: ${CLAUDE_MODEL:-claude-sonnet-4-6}
+      AZURE_AI_PROJECT_ENDPOINT: ${AZURE_AI_PROJECT_ENDPOINT:-}
+      AZURE_AI_MODEL_DEPLOYMENT_NAME: ${AZURE_AI_MODEL_DEPLOYMENT_NAME:-}
+      MCP_SERVER_URL: ${MCP_SERVER_URL:-http://osm-mcp:8080/sse}
+      MCP_SERVER_NAME: osm-mcp
+      MCP_APPROVAL_MODE: ${MCP_APPROVAL_MODE:-never_require}
+      API_HOST: 0.0.0.0
+      API_PORT: "8002"
+      MCP_SURFACE_ENABLED: "true"
+      MCP_SURFACE_HOST: 0.0.0.0
+      MCP_SURFACE_PORT: "8003"
+      MCP_SURFACE_PATH: /mcp
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    depends_on:
+      osm-mcp:
+        condition: service_started
+      ollama-cpu:
+        condition: service_healthy
+        required: false
+      ollama-gpu:
+        condition: service_healthy
+        required: false
+    restart: unless-stopped
 
 volumes:
-  ollama_models:
-
-networks:
-  default:
-    name: osm_mcp_network
+  ollama_data:
+    name: osm-ollama-data

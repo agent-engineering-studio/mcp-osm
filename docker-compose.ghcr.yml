@@ -1,128 +1,46 @@
-# ── docker-compose.ghcr.yml ──────────────────────────────────────────────────
-#
-# Variante del docker-compose.yml che consuma le immagini pre-buildate
-# pubblicate su GitHub Container Registry (ghcr.io) dal workflow
-# `.github/workflows/release-docker.yml`.
-#
-# Nessun build locale: utile per ambienti di staging / demo / CI dove si vuole
-# solo tirare ed eseguire.
-#
-# Variabili rilevanti:
-#   GHCR_OWNER       → owner/org su GitHub (default: agent-engineering-studio)
-#   GHCR_REPO        → nome del repo                (default: mcp-osm)
-#   OSM_IMAGE_TAG    → tag immagine da usare        (default: latest)
-#
-# Esempi:
-#   docker compose -f docker-compose.ghcr.yml --profile prod up -d
-#   OSM_IMAGE_TAG=v1.2.3 \
-#     docker compose -f docker-compose.ghcr.yml --profile prod up -d
-#   docker compose -f docker-compose.ghcr.yml --profile prod --profile cpu up -d
-#
-# Se le immagini GHCR sono private, prima esegui:
-#   echo $GITHUB_TOKEN | docker login ghcr.io -u <username> --password-stdin
-#
-# ─────────────────────────────────────────────────────────────────────────────
+# docker-compose.ghcr.yml — pre-built GHCR images, no local build
+name: osm-mcp
 
 services:
-  # ── OSM MCP server (Python FastMCP, SSE transport) ─────────────────────────
   osm-mcp:
+    image: ghcr.io/agent-engineering-studio/osm-mcp:latest
     container_name: osm-mcp
-    profiles: [prod]
-    image: ghcr.io/${GHCR_OWNER:-agent-engineering-studio}/${GHCR_REPO:-mcp-osm}/osm-mcp:${OSM_IMAGE_TAG:-latest}
     pull_policy: always
     ports:
-      - "8080:8080"
+      - "${MCP_PORT:-8080}:8080"
     environment:
-      - MCP_TRANSPORT=sse
-      - MCP_HOST=0.0.0.0
-      - MCP_PORT=8080
-      - NOMINATIM_URL=${NOMINATIM_URL:-https://nominatim.openstreetmap.org}
-      - OVERPASS_URL=${OVERPASS_URL:-https://overpass-api.de/api/interpreter}
-      - OSRM_URL=${OSRM_URL:-https://router.project-osrm.org}
-      - OSM_USER_AGENT=${OSM_USER_AGENT:-osm-mcp/0.1 (agent-engineering-studio)}
-      - OSM_CONTACT_EMAIL=${OSM_CONTACT_EMAIL:-}
-    healthcheck:
-      test: ["CMD-SHELL", "python -c \"import socket; socket.create_connection(('localhost',8080),3).close()\""]
-      interval: 15s
-      timeout: 5s
-      retries: 5
-      start_period: 20s
+      MCP_TRANSPORT: sse
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: "8080"
+      NOMINATIM_URL: ${NOMINATIM_URL:-https://nominatim.openstreetmap.org}
+      OVERPASS_URL: ${OVERPASS_URL:-https://overpass-api.de/api/interpreter}
+      OSRM_URL: ${OSRM_URL:-https://router.project-osrm.org}
+      OSM_USER_AGENT: ${OSM_USER_AGENT:-osm-mcp/0.1 (agent-engineering-studio)}
+      OSM_CONTACT_EMAIL: ${OSM_CONTACT_EMAIL:-}
+      MAP_TILE_URL: ${MAP_TILE_URL:-https://tile.openstreetmap.org/{z}/{x}/{y}.png}
+    restart: unless-stopped
 
-  # ── OSM Agent (C# / .NET, Microsoft Agent Framework) ──────────────────────
-  osm-agent:
-    container_name: osm-agent
-    profiles: [prod]
-    image: ghcr.io/${GHCR_OWNER:-agent-engineering-studio}/${GHCR_REPO:-mcp-osm}/osm-agent:${OSM_IMAGE_TAG:-latest}
+  osm-mcp-agent:
+    image: ghcr.io/agent-engineering-studio/osm-mcp-agent:latest
+    container_name: osm-mcp-agent
     pull_policy: always
     ports:
-      - "8090:8090"
+      - "${AGENT_PORT:-8002}:8002"
+      - "${AGENT_MCP_PORT:-8003}:8003"
     environment:
-      - ASPNETCORE_ENVIRONMENT=${ASPNETCORE_ENVIRONMENT:-Production}
-      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
-      - OLLAMA_LLM_MODEL=${OLLAMA_LLM_MODEL:-qwen2.5:7b}
-      - MCP_SERVER_URL=${MCP_SERVER_URL:-http://osm-mcp:8080/sse}
+      LLM_PROVIDER: ${LLM_PROVIDER:-claude}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      CLAUDE_MODEL: ${CLAUDE_MODEL:-claude-sonnet-4-6}
+      AZURE_AI_PROJECT_ENDPOINT: ${AZURE_AI_PROJECT_ENDPOINT:-}
+      AZURE_AI_MODEL_DEPLOYMENT_NAME: ${AZURE_AI_MODEL_DEPLOYMENT_NAME:-}
+      MCP_SERVER_URL: http://osm-mcp:8080/sse
+      MCP_SERVER_NAME: osm-mcp
+      MCP_APPROVAL_MODE: ${MCP_APPROVAL_MODE:-never_require}
+      API_HOST: 0.0.0.0
+      API_PORT: "8002"
+      MCP_SURFACE_ENABLED: "true"
+      MCP_SURFACE_PORT: "8003"
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
     depends_on:
-      osm-mcp:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:8090/health"]
-      interval: 30s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-
-  # ── Ollama GPU (NVIDIA) ───────────────────────────────────────────────────
-  ollama-gpu:
-    container_name: osm-ollama-gpu
-    profiles: [gpu]
-    build:
-      context: ./infra/ollama
-      dockerfile: Dockerfile
-    environment:
-      - OLLAMA_MODELS=${OLLAMA_MODELS:-qwen2.5:7b}
-    ports:
-      - "127.0.0.1:11434:11434"
-    volumes:
-      - ollama_models:/root/.ollama
-    healthcheck:
-      test: ["CMD-SHELL", "ollama list > /dev/null 2>&1 || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 10
-      start_period: 120s
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
-
-  # ── Ollama CPU-only ────────────────────────────────────────────────────────
-  ollama-cpu:
-    container_name: osm-ollama-cpu
-    profiles: [cpu]
-    build:
-      context: ./infra/ollama
-      dockerfile: Dockerfile
-    environment:
-      - OLLAMA_MODELS=${OLLAMA_MODELS:-qwen2.5:7b}
-    ports:
-      - "127.0.0.1:11434:11434"
-    volumes:
-      - ollama_models:/root/.ollama
-    healthcheck:
-      test: ["CMD-SHELL", "ollama list > /dev/null 2>&1 || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 10
-      start_period: 120s
-
-volumes:
-  ollama_models:
-
-networks:
-  default:
-    name: osm_mcp_network
+      osm-mcp: { condition: service_started }
+    restart: unless-stopped
