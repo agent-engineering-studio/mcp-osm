@@ -16,11 +16,16 @@ other MCP-aware coordinators.
 
 ```bash
 cp .env.example .env
-make up-cpu                  # boots osm-mcp + agent + Ollama (CPU)
+make build-ollama            # one-off: bakes llama3.1:tools into the image (~5 GB, ~10 min)
+make up-cpu                  # or up-gpu — boots osm-mcp + agent + Ollama
 curl http://localhost:8002/health
 ```
 
-For Claude instead of Ollama:
+The Ollama image is **pre-baked**: `make up` is instant on subsequent runs, no
+first-run model pull/polling. Re-run `make build-ollama` only if you change
+`infra/ollama/Modelfile`.
+
+For Claude instead of Ollama (no local LLM, recommended for highest tool-call quality):
 
 ```bash
 cp .env.dev-claude.example .env   # then fill ANTHROPIC_API_KEY
@@ -70,6 +75,15 @@ The agent picks one of two LLM providers at startup based on `LLM_PROVIDER`:
 
 Two sample envs ship with the repo: `.env.example`, `.env.dev-claude.example`.
 Copy one to `.env`.
+
+### Ollama model
+
+Default is **`llama3.1:tools`** — a `llama3.1:8b` derivative with `num_ctx=16384`
+and `temperature=0.2` baked via [`infra/ollama/Modelfile`](infra/ollama/Modelfile).
+llama3.1 is used because it has reliable native function-calling support; smaller
+Qwen variants tend to skip tool calls and answer from memory, which breaks the
+ChatResponse contract (`/chat` returns text only, no GeoJSON / preview_html).
+Override via `OLLAMA_LLM_MODEL` if you want a different tool-capable model.
 
 ## OSM tools (13)
 
@@ -127,8 +141,14 @@ near the Pantheon on a map") and get back the rendered HTML map.
 ```bash
 make mcp-test       # pytest on osm-mcp
 make agent-test     # pytest on osm-mcp-agent
+make mcp-smoke      # MCP Inspector + /chat smoke (auto-detects Ollama / Claude)
 make smoke          # full stack + newman against the Postman collection
 ```
+
+The `mcp-smoke` suite exercises the full `/chat` contract (TA10 / TA11): asserts
+that the LLM actually calls the geocode/POI tools and that `ChatResponse` carries
+`text`, `description[]`, `resources[]` (GeoJSON FeatureCollection), and
+`preview_html` (Leaflet snippet for inline chat embeds).
 
 Manual: open `requests/agent-chat.http` in VS Code with the **REST Client** extension
 and click "Send Request" on any of the sections.
