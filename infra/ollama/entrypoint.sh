@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # infra/ollama/entrypoint.sh
-# Bake qwen2.5:16k from qwen2.5:7b-instruct + Modelfile on first start, then keep serving.
+# Fallback bake: only runs if the model isn't already baked into the image.
+# When using `make build-ollama`, the model is already present and this is a no-op.
 set -euo pipefail
 
 ollama serve &
@@ -12,10 +13,10 @@ for i in $(seq 1 60); do
   sleep 1
 done
 
-if ! ollama list | grep -q "qwen2.5:16k"; then
-  echo "▶ Baking qwen2.5:16k from Modelfile..."
-  ollama pull qwen2.5:7b-instruct
-  ollama create qwen2.5:16k -f /Modelfile
+if ! ollama list | grep -q "llama3.1:tools"; then
+  echo "▶ Baking llama3.1:tools from Modelfile..."
+  ollama pull llama3.1:8b
+  ollama create llama3.1:tools -f /Modelfile
 fi
 
 wait "$SERVE_PID"

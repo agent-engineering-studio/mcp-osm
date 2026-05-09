@@ -188,9 +188,12 @@ async def osm_health() -> str:
     import httpx
     import json
 
+    # Overpass blocks the default `python-httpx/X.Y` UA with 406, so identify ourselves.
+    headers = {"User-Agent": settings.OSM_USER_AGENT}
+
     async def _ping(url: str) -> bool:
         try:
-            async with httpx.AsyncClient(timeout=5.0) as c:
+            async with httpx.AsyncClient(timeout=5.0, headers=headers) as c:
                 r = await c.get(url)
                 return r.status_code < 500
         except Exception:

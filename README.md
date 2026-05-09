@@ -141,7 +141,7 @@ Three images are published from `main` and on every `v*` tag:
 |---|---|
 | `ghcr.io/agent-engineering-studio/osm-mcp` | FastMCP server (multi-arch) |
 | `ghcr.io/agent-engineering-studio/osm-mcp-agent` | Python agent (multi-arch) |
-| `ghcr.io/agent-engineering-studio/osm-mcp-ollama` | Ollama with `qwen2.5:16k` baked in |
+| `ghcr.io/agent-engineering-studio/osm-mcp-ollama` | Ollama with `llama3.1:tools` baked in |
 
 Pull-only quick start: `make up-ghcr`.
 

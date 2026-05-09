@@ -9,7 +9,7 @@ on:
     inputs:
       base_model:
         description: "Base Ollama model"
-        default: "qwen2.5:7b-instruct"
+        default: "llama3.1:8b"
 
 permissions:
   contents: read
@@ -36,11 +36,11 @@ jobs:
           docker run -d --name bake -v ollama_bake:/root/.ollama \
             --entrypoint /bin/bash osm-mcp-ollama:bake \
             -c "ollama serve & sleep 5 && \
-                ollama pull ${{ inputs.base_model || 'qwen2.5:7b-instruct' }} && \
-                ollama create qwen2.5:16k -f /Modelfile && \
+                ollama pull ${{ inputs.base_model || 'llama3.1:8b' }} && \
+                ollama create llama3.1:tools -f /Modelfile && \
                 tail -f /dev/null"
           for i in $(seq 1 60); do
-            docker exec bake bash -c "ollama list 2>/dev/null | grep -q 'qwen2.5:16k'" && break
+            docker exec bake bash -c "ollama list 2>/dev/null | grep -q 'llama3.1:tools'" && break
             sleep 10
           done
           docker exec bake bash -c "ollama list"

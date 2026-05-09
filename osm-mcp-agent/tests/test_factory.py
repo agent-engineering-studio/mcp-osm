@@ -15,13 +15,13 @@ def _settings(**kw) -> Settings:
 
 def test_ollama_provider_returns_ollama_client():
     s = _settings(llm_provider="ollama",
-                  ollama_base_url="http://x:11434", ollama_llm_model="qwen2.5:7b")
+                  ollama_base_url="http://x:11434", ollama_llm_model="llama3.1:8b")
     with patch("agent_framework.ollama.OllamaChatClient") as mock:
         build_chat_client(s)
     mock.assert_called_once()
     kw = mock.call_args.kwargs
     assert kw["host"] == "http://x:11434"
-    assert kw["model"] == "qwen2.5:7b"
+    assert kw["model"] == "llama3.1:8b"
 
 
 def test_claude_provider_requires_api_key():

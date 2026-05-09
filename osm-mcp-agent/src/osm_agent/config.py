@@ -16,7 +16,7 @@ class Settings(BaseSettings):
 
     # Ollama
     ollama_base_url: str = "http://osm-ollama:11434"
-    ollama_llm_model: str = "qwen2.5:16k"
+    ollama_llm_model: str = "llama3.1:tools"
     ollama_num_ctx: int = 16384
 
     # Claude (Anthropic)

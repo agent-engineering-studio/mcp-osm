@@ -63,7 +63,7 @@ refresh-ollama: build-ollama  ## Rebuild + recreate the Ollama container
 	$(DC) --profile cpu up -d --force-recreate ollama-cpu
 
 pull-models:    ## Pull base Ollama model on the host
-	ollama pull qwen2.5:7b-instruct
+	ollama pull llama3.1:8b
 
 # ── Smoke / integration ─────────────────────────────────────────────────
 smoke:          ## Up stack + run newman against /compose-map and friends

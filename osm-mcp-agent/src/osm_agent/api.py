@@ -326,6 +326,10 @@ _settings: Settings | None = None
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     global _session, _settings
+    # If main.py has already injected a shared session, just use it.
+    if _session is not None:
+        yield
+        return
     _settings = get_settings()
     log.info("Starting osm-agent with provider=%s", _settings.llm_provider)
     _session = AgentSession(_settings)

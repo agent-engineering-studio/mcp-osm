@@ -49,7 +49,16 @@ def _summarise_element(el: dict[str, Any]) -> dict[str, Any]:
 
 # ── Tools ───────────────────────────────────────────────────────────
 
+_MAX_ADDRESS_LEN = 200
+
+
 async def geocode_address(address: str, limit: int = 5) -> str:
+    if len(address) > _MAX_ADDRESS_LEN:
+        return _json({
+            "error": f"address too long (max {_MAX_ADDRESS_LEN} chars)",
+            "results": [],
+            "count": 0,
+        })
     results = await osm_client.geocode(address, limit=limit)
     out = [
         {

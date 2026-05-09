@@ -3,7 +3,9 @@ name: osm-mcp
 
 x-ollama-base: &ollama-base
   image: ${OLLAMA_IMAGE:-ghcr.io/agent-engineering-studio/osm-mcp-ollama:latest}
-  pull_policy: ${OLLAMA_PULL_POLICY:-always}
+  # `missing` so a locally-built image (e.g. `make build-ollama`) is preferred
+  # over the GHCR copy and isn't silently overwritten on every `up`.
+  pull_policy: ${OLLAMA_PULL_POLICY:-missing}
   container_name: osm-ollama
   ports:
     - "${OLLAMA_PORT:-11434}:11434"
@@ -63,7 +65,7 @@ services:
     environment:
       LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://osm-ollama:11434}
-      OLLAMA_LLM_MODEL: ${OLLAMA_LLM_MODEL:-qwen2.5:16k}
+      OLLAMA_LLM_MODEL: ${OLLAMA_LLM_MODEL:-llama3.1:tools}
       OLLAMA_NUM_CTX: ${OLLAMA_NUM_CTX:-16384}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       CLAUDE_MODEL: ${CLAUDE_MODEL:-claude-sonnet-4-6}
