@@ -21,7 +21,15 @@ You are an OpenStreetMap-aware geographic assistant. Answer user questions about
 places, addresses, routing, points of interest, and neighborhoods by calling the
 available MCP tools. Prefer tools over guessing.
 
-Distance in km, durations in minutes. Be concise.
+RESPONSE FORMAT:
+- Provide a clear, concise textual summary describing the place or result.
+- If a place EXISTS, describe: full name, administrative location (city, region,
+  country), approximate coordinates, type (city, village, district, etc.), and
+  any relevant context such as population or landmarks when available.
+- If a place does NOT exist or the geocoder returns zero results, clearly state
+  that no results were found. Suggest spelling corrections or alternative names
+  if possible. Do NOT invent data.
+- Express distances in km, durations in minutes.
 
 Map rendering: when the user asks for a map, or you receive structured GeoJSON
 data (in the prompt or via a tool result), call one of:
@@ -30,15 +38,8 @@ data (in the prompt or via a tool result), call one of:
   - render_multi_layer_map(layers=[{name, geojson, style?}, ...], title=?, ...)
   - compose_map_from_resources(text=?, resources=[...], title=?, ...)
 
-The map tools return a text summary AND an HTML resource block. Tell the user
-the map is available — the client renders the HTML inline.
-
-End your answer with this block (replace [] with the actual list of resources
-the tools returned, empty array if no resource was produced):
-
-<!--RESOURCES_JSON-->
-[]
-<!--/RESOURCES_JSON-->
+The system automatically extracts coordinates from tool results and builds
+GeoJSON resources for the client. Focus on writing a clear, informative summary.
 """
 
 
@@ -52,7 +53,7 @@ def build_chat_client(settings: Settings) -> Any:
     log.info("Building chat client for provider=%s", p)
 
     if p == "ollama":
-        from agent_framework_ollama import OllamaChatClient
+        from agent_framework.ollama import OllamaChatClient
         return OllamaChatClient(
             host=settings.ollama_base_url,
             model=settings.ollama_llm_model,
@@ -63,27 +64,10 @@ def build_chat_client(settings: Settings) -> Any:
             raise RuntimeError(
                 "ANTHROPIC_API_KEY is required when LLM_PROVIDER=claude"
             )
-        from agent_framework_anthropic import AnthropicClient
+        from agent_framework.anthropic import AnthropicClient
         return AnthropicClient(
             api_key=settings.anthropic_api_key,
             model=settings.claude_model,
-        )
-
-    if p == "azure_foundry":
-        if not settings.azure_ai_project_endpoint:
-            raise RuntimeError(
-                "AZURE_AI_PROJECT_ENDPOINT is required when LLM_PROVIDER=azure_foundry"
-            )
-        if not settings.azure_ai_model_deployment_name:
-            raise RuntimeError(
-                "AZURE_AI_MODEL_DEPLOYMENT_NAME is required when LLM_PROVIDER=azure_foundry"
-            )
-        from agent_framework_foundry import FoundryChatClient
-        from azure.identity.aio import DefaultAzureCredential
-        return FoundryChatClient(
-            project_endpoint=settings.azure_ai_project_endpoint,
-            model=settings.azure_ai_model_deployment_name,
-            credential=DefaultAzureCredential(),
         )
 
     raise RuntimeError(f"Unsupported LLM_PROVIDER={p!r}")
@@ -118,7 +102,7 @@ class AgentSession:
             default_options["num_ctx"] = self._settings.ollama_num_ctx
 
         agent = Agent(
-            chat_client,
+            client=chat_client,
             instructions=AGENT_INSTRUCTIONS,
             name=self._settings.agent_name,
             tools=[mcp_tool],
@@ -140,8 +124,20 @@ class AgentSession:
         return self._agent
 
     async def run(self, query: str) -> str:
+        """Run the agent and return just the final text."""
+        result = await self.run_full(query)
+        return result.text or ""
+
+    async def run_full(self, query: str):
+        """Run the agent and return the full AgentResponse (with messages).
+
+        The returned object exposes:
+        - ``.text``     — concatenation of all message texts
+        - ``.messages`` — list of Message objects (user, assistant, tool roles)
+
+        Tool results are stored in Content items with
+        ``type == 'mcp_server_tool_result'``.
+        """
         if self._agent is None:
             raise RuntimeError("AgentSession not entered")
-        result = await self._agent.run(query)
-        text = getattr(result, "text", None)
-        return text if text is not None else str(result)
+        return await self._agent.run(query)

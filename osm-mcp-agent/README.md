@@ -1,8 +1,8 @@
 # osm-mcp-agent
 
-Python agent for the OpenStreetMap MCP server, with provider switch (Ollama/Claude/Azure AI Foundry) and dual REST + MCP surface.
+Python agent for the OpenStreetMap MCP server, with provider switch (Ollama/Claude) and dual REST + MCP surface.
 
-See top-level `README.md` for full documentation. See `docs/superpowers/specs/2026-04-27-mcp-osm-parity-design.md` for design.
+See top-level `README.md` for full documentation.
 
 ## Quick start (local dev)
 

@@ -3,8 +3,7 @@
   agent-install agent-test agent-run \
   build up up-cpu up-gpu up-ghcr down logs \
   build-ollama refresh-ollama pull-models \
-  smoke \
-  deploy-azure destroy-azure setup-oidc
+  smoke mcp-smoke mcp-smoke-full mcp-smoke-claude
 
 DC = docker compose
 
@@ -25,8 +24,8 @@ mcp-inspector:  ## Open the MCP Inspector against osm-mcp (stdio)
 	cd osm-mcp && npx @modelcontextprotocol/inspector python -m osm_mcp.server
 
 # ── Agent (Python) ──────────────────────────────────────────────────────
-agent-install:  ## Install osm-mcp-agent with dev + claude + azure extras
-	cd osm-mcp-agent && pip install --pre -e ".[dev,claude,azure]"
+agent-install:  ## Install osm-mcp-agent with dev + claude extras
+	cd osm-mcp-agent && pip install --pre -e ".[dev,claude]"
 
 agent-test:     ## Run pytest on osm-mcp-agent
 	cd osm-mcp-agent && pytest -v
@@ -38,7 +37,7 @@ agent-run:      ## Run the agent locally (REST :8002 + MCP :8003)
 build:          ## Build all docker images
 	$(DC) build
 
-up:             ## Up the stack (no Ollama profile — assumes Ollama on host or claude/foundry)
+up:             ## Up the stack (no Ollama profile — assumes Ollama on host or claude)
 	$(DC) up --build -d
 
 up-cpu:         ## Up the stack with Ollama CPU container
@@ -71,12 +70,13 @@ smoke:          ## Up stack + run newman against /compose-map and friends
 	$(DC) up -d
 	@bash requests/postman/test-agent-chat.sh
 
-# ── Azure ───────────────────────────────────────────────────────────────
-deploy-azure:   ## Deploy to Azure Container Apps via Bicep (bash)
-	bash infra/scripts/deploy.sh
+mcp-smoke:      ## MCP Inspector smoke tests (auto-detect docker + LLM)
+	@bash scripts/test-mcp-inspector.sh
 
-destroy-azure:  ## Destroy the resource group (irreversible)
-	bash infra/scripts/destroy.sh
+mcp-smoke-full: ## MCP Inspector full suite (50+ test)
+	@bash scripts/test-mcp-inspector.sh --full
 
-setup-oidc:     ## Configure GitHub OIDC federation for deploy-azure.yml
-	bash infra/scripts/setup-github-oidc.sh
+mcp-smoke-claude: ## MCP Inspector + Agent tests with Claude (consuma token)
+	@bash scripts/test-mcp-inspector.sh --claude --full
+
+

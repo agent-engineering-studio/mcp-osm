@@ -1,13 +1,16 @@
 # osm-mcp-agent/src/osm_agent/api.py
 """FastAPI surface for the agent.
 
-Endpoints (this task — Tasks 9–10 add the rest):
+Endpoints:
   GET  /health
-  POST /chat
-  POST /chat/stream  (SSE)
+  POST /chat          → ChatResponse {text, resources[GEOJSON|HTML]}
+  POST /chat/stream   → SSE text stream
+  POST /compose-map   → deterministic map render (no LLM)
+  POST /chat/with-geojson → upload GeoJSON + message
 
-Reuses the ckan-mcp-agent <!--RESOURCES_JSON--> marker pattern so the response
-shape is identical and composable.
+The agent returns a **text** summary describing the place / result and
+**resources** with GeoJSON FeatureCollections extracted deterministically
+from MCP tool results (no LLM marker parsing).
 """
 from __future__ import annotations
 
@@ -15,7 +18,7 @@ import json
 import logging
 import re
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
+from typing import Any, AsyncIterator
 
 import httpx
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
@@ -27,39 +30,227 @@ from .factory import AgentSession
 
 log = logging.getLogger("osm-agent.api")
 
+# Legacy marker — kept only for cleaning up LLM text if it still emits it
 _RESOURCES_RE = re.compile(
     r"<!--RESOURCES_JSON-->\s*(.*?)\s*<!--/RESOURCES_JSON-->", re.DOTALL
 )
-_RESOURCES_MARKER_PROMPT = (
-    "\n\n[SYSTEM REMINDER] After your answer, you MUST append this block "
-    "(replace [] with the actual resources array — empty array [] if none):\n"
-    "<!--RESOURCES_JSON-->\n[]\n<!--/RESOURCES_JSON-->"
-)
 
 
-def _parse_resources_block(raw: str) -> tuple[str, list[Resource]]:
-    """Extract the resources JSON block and return (clean_text, resources).
+# ══════════════════════════════════════════════════════════════════════════
+#  Deterministic tool-result extraction
+# ══════════════════════════════════════════════════════════════════════════
 
-    Falls back to (raw, []) if the block is absent or malformed.
+
+def _extract_tool_outputs(response) -> list[tuple[str, Any]]:
+    """Walk AgentResponse.messages and collect (tool_name, output) pairs
+    from every ``mcp_server_tool_result`` Content item.
     """
-    match = _RESOURCES_RE.search(raw)
-    if not match:
-        return raw, []
-    try:
-        items = json.loads(match.group(1))
-        if isinstance(items, dict):
-            for key in ("resources", "data", "items", "results"):
-                if isinstance(items.get(key), list):
-                    items = items[key]
-                    break
-        if not isinstance(items, list):
-            return raw, []
-        resources = [Resource(**i) for i in items]
-    except Exception:
-        log.warning("could not parse resources block", exc_info=True)
-        return raw, []
-    text = _RESOURCES_RE.sub("", raw).strip()
-    return text, resources
+    results: list[tuple[str, Any]] = []
+    for msg in getattr(response, "messages", []):
+        for content in getattr(msg, "contents", []):
+            if getattr(content, "type", None) == "mcp_server_tool_result":
+                tool_name = getattr(content, "tool_name", None) or ""
+                output = getattr(content, "output", None)
+                if output is not None:
+                    results.append((tool_name, output))
+    return results
+
+
+def _parse_mcp_output(output: Any) -> tuple[dict | None, list[dict]]:
+    """Normalise an MCP tool output into (data_dict, resource_blocks).
+
+    Handles: plain JSON string, dict, or list-of-content-blocks.
+    """
+    data: dict | None = None
+    resources: list[dict] = []
+
+    if isinstance(output, str):
+        try:
+            data = json.loads(output)
+        except (json.JSONDecodeError, TypeError):
+            pass
+    elif isinstance(output, dict):
+        data = output
+    elif isinstance(output, list):
+        for item in output:
+            if isinstance(item, dict):
+                if item.get("type") == "text":
+                    try:
+                        data = json.loads(item.get("text", ""))
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                elif item.get("type") == "resource":
+                    resources.append(item)
+            elif hasattr(item, "type"):
+                itype = getattr(item, "type", "")
+                if itype == "text":
+                    try:
+                        data = json.loads(getattr(item, "text", "") or "")
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+    return data, resources
+
+
+def _tool_data_to_features(tool_name: str, data: dict) -> list[dict]:
+    """Convert parsed tool output data into a list of GeoJSON Features."""
+    features: list[dict] = []
+
+    def _point(lat, lon, props: dict) -> dict:
+        return {
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [float(lon), float(lat)]},
+            "properties": {k: v for k, v in props.items() if v is not None},
+        }
+
+    if tool_name == "geocode_address":
+        for r in data.get("results", []):
+            if r.get("lat") is not None and r.get("lon") is not None:
+                features.append(_point(r["lat"], r["lon"], {
+                    "name": r.get("display_name"),
+                    "type": r.get("type"),
+                    "class": r.get("class"),
+                    "importance": r.get("importance"),
+                }))
+
+    elif tool_name == "reverse_geocode":
+        if data.get("lat") is not None and data.get("lon") is not None:
+            features.append(_point(data["lat"], data["lon"], {
+                "name": data.get("display_name"),
+                "type": data.get("type"),
+                "address": data.get("address"),
+            }))
+
+    elif tool_name in ("find_nearby_places", "search_category_in_bbox"):
+        cat = data.get("category", "")
+        for p in data.get("places", []):
+            if p.get("lat") is not None and p.get("lon") is not None:
+                features.append(_point(p["lat"], p["lon"], {
+                    "name": p.get("name"),
+                    "id": p.get("id"),
+                    "category": p.get("category") or cat,
+                    "phone": p.get("phone"),
+                    "website": p.get("website"),
+                    "opening_hours": p.get("opening_hours"),
+                }))
+
+    elif tool_name == "get_route":
+        geom = data.get("geometry")
+        if geom and not data.get("error"):
+            features.append({
+                "type": "Feature",
+                "geometry": geom,
+                "properties": {k: v for k, v in {
+                    "distance_m": data.get("distance_m"),
+                    "duration_s": data.get("duration_s"),
+                    "profile": data.get("profile"),
+                }.items() if v is not None},
+            })
+
+    elif tool_name == "find_ev_charging_stations":
+        for s in data.get("stations", []):
+            if s.get("lat") is not None and s.get("lon") is not None:
+                features.append(_point(s["lat"], s["lon"], {
+                    "name": s.get("name"),
+                    "operator": s.get("operator"),
+                    "capacity": s.get("capacity"),
+                    "power_kw": s.get("power_kw"),
+                }))
+
+    elif tool_name == "suggest_meeting_point":
+        if data.get("lat") is not None and data.get("lon") is not None and not data.get("error"):
+            features.append(_point(data["lat"], data["lon"], {
+                "name": data.get("display_name", "Meeting Point"),
+                "max_travel_duration_s": data.get("max_travel_duration_s"),
+            }))
+
+    elif tool_name == "explore_area":
+        center = data.get("center", {})
+        if center.get("lat") is not None:
+            features.append(_point(center["lat"], center["lon"], {
+                "name": center.get("address", "Center"), "role": "center",
+            }))
+        for cat, places in data.get("categories", {}).items():
+            for p in places:
+                if p.get("lat") is not None and p.get("lon") is not None:
+                    features.append(_point(p["lat"], p["lon"], {
+                        "name": p.get("name"), "category": cat,
+                    }))
+
+    elif tool_name == "analyze_commute":
+        for key in ("home", "work"):
+            pt = data.get(key, {})
+            if pt.get("lat") is not None:
+                features.append(_point(pt["lat"], pt["lon"], {
+                    "name": key.title(), "role": key,
+                }))
+
+    return features
+
+
+def _build_resources_from_tool_outputs(
+    tool_outputs: list[tuple[str, Any]],
+) -> list[Resource]:
+    """Build GeoJSON + HTML resources from extracted tool outputs."""
+    all_features: list[dict] = []
+    resources: list[Resource] = []
+
+    for tool_name, output in tool_outputs:
+        data, resource_blocks = _parse_mcp_output(output)
+
+        # Coordinate data → GeoJSON features
+        if data:
+            all_features.extend(_tool_data_to_features(tool_name, data))
+
+        # HTML resources from render_* tools
+        for rb in resource_blocks:
+            res = rb.get("resource", {})
+            if "html" in (res.get("mimeType") or ""):
+                resources.append(Resource(
+                    name=(res.get("uri") or "").split("/")[-1] or "map",
+                    format="HTML",
+                    content=res.get("text"),
+                ))
+
+    # Wrap collected features in a single FeatureCollection resource
+    if all_features:
+        fc = {"type": "FeatureCollection", "features": all_features}
+        resources.insert(0, Resource(
+            name="osm-results",
+            format="GEOJSON",
+            content=json.dumps(fc, ensure_ascii=False),
+        ))
+
+    return resources
+
+
+def _get_assistant_text(response) -> str:
+    """Extract the clean assistant text from an AgentResponse.
+
+    Walks messages in reverse to find the last assistant message, strips
+    any legacy ``<!--RESOURCES_JSON-->`` markers.
+    """
+    for msg in reversed(getattr(response, "messages", [])):
+        if getattr(msg, "role", "") == "assistant":
+            text = getattr(msg, "text", "").strip()
+            if text:
+                return _RESOURCES_RE.sub("", text).strip()
+    # Fallback: use full response text
+    raw = getattr(response, "text", "") or ""
+    return _RESOURCES_RE.sub("", raw).strip()
+
+
+def _process_agent_response(response) -> ChatResponse:
+    """Convert an AgentResponse into a structured ChatResponse.
+
+    1. Extract clean assistant text (the LLM summary).
+    2. Extract MCP tool results from messages.
+    3. Build GeoJSON resources from coordinate data.
+    4. Collect HTML resources from render_* tool results.
+    """
+    text = _get_assistant_text(response)
+    tool_outputs = _extract_tool_outputs(response)
+    resources = _build_resources_from_tool_outputs(tool_outputs)
+    return ChatResponse(text=text, resources=resources)
 
 
 _session: AgentSession | None = None
@@ -95,31 +286,25 @@ async def health() -> dict[str, str]:
 async def chat(req: ChatRequest) -> ChatResponse:
     if _session is None:
         raise HTTPException(503, "Agent session not initialised")
-    raw = await _session.run(req.query + _RESOURCES_MARKER_PROMPT)
-    text, resources = _parse_resources_block(raw)
-    return ChatResponse(text=text, resources=resources)
+    response = await _session.run_full(req.query)
+    return _process_agent_response(response)
 
 
 @app.post("/chat/stream")
 async def chat_stream(req: ChatRequest) -> StreamingResponse:
+    """SSE text stream — yields incremental text chunks only.
+
+    Note: resources (GeoJSON, HTML maps) are NOT included in the stream.
+    Use ``POST /chat`` for the full structured response with resources.
+    """
     if _session is None:
         raise HTTPException(503, "Agent session not initialised")
 
     async def gen() -> AsyncIterator[bytes]:
-        try:
-            # Try the streaming API on the underlying Agent. Different
-            # agent_framework versions expose this differently — fall back to
-            # one-shot run() if streaming isn't available.
-            stream_method = getattr(_session.agent, "run_streaming", None) \
-                or getattr(_session.agent, "run_stream", None)
-            if stream_method is None:
-                raise AttributeError("no streaming method on Agent")
-            async for update in stream_method(req.query + _RESOURCES_MARKER_PROMPT):
-                payload = json.dumps({"text": str(update)}, ensure_ascii=False)
+        async for chunk in _session.agent.run(req.query, stream=True):
+            if chunk.text:
+                payload = json.dumps({"text": chunk.text}, ensure_ascii=False)
                 yield f"data: {payload}\n\n".encode("utf-8")
-        except AttributeError:
-            text = await _session.run(req.query + _RESOURCES_MARKER_PROMPT)
-            yield f"data: {json.dumps({'text': text})}\n\n".encode("utf-8")
         yield b"event: done\ndata: {}\n\n"
 
     return StreamingResponse(gen(), media_type="text/event-stream")
@@ -280,8 +465,6 @@ async def chat_with_geojson(
         f"{', truncated' if truncated else ''}):\n"
         f"```geojson\n{embed}\n```\n\n"
         "If the user asks for a map, call render_geojson_map with this GeoJSON."
-        + _RESOURCES_MARKER_PROMPT
     )
-    text_raw = await _session.run(enriched)
-    text, resources = _parse_resources_block(text_raw)
-    return ChatResponse(text=text, resources=resources)
+    response = await _session.run_full(enriched)
+    return _process_agent_response(response)

@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     )
 
     # ── LLM provider switch ──
-    llm_provider: Literal["ollama", "claude", "azure_foundry"] = "ollama"
+    llm_provider: Literal["ollama", "claude"] = "ollama"
 
     # Ollama
     ollama_base_url: str = "http://osm-ollama:11434"
@@ -22,10 +22,6 @@ class Settings(BaseSettings):
     # Claude (Anthropic)
     anthropic_api_key: str | None = None
     claude_model: str = "claude-sonnet-4-6"
-
-    # Azure AI Foundry
-    azure_ai_project_endpoint: str | None = None
-    azure_ai_model_deployment_name: str | None = None
 
     # ── osm-mcp upstream ──
     mcp_server_url: str = "http://osm-mcp:8080/mcp"

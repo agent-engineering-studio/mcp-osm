@@ -14,10 +14,11 @@ RUN apt-get update \
 COPY pyproject.toml README.md ./
 COPY src ./src
 
-# Install with claude+azure extras so all three providers are available at
+# Install with claude extra so both providers are available at
 # runtime (chosen via LLM_PROVIDER env var). --pre is required because the
 # agent-framework packages are still published as 1.0.0b* pre-releases.
-RUN pip install --no-cache-dir --pre -e ".[claude,azure]"
+# Extended timeout + retries for large wheels (anthropic SDK ~74MB).
+RUN pip install --no-cache-dir --pre --timeout 120 --retries 3 -e ".[claude]"
 
 EXPOSE 8002 8003
 

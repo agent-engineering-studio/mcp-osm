@@ -25,7 +25,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "3.12", cache: "pip" }
-      - run: cd osm-mcp-agent && pip install --pre -e ".[dev,claude,azure]"
+      - run: cd osm-mcp-agent && pip install --pre -e ".[dev,claude]"
       - run: cd osm-mcp-agent && python -m ruff check src tests
       - run: cd osm-mcp-agent && pytest -v
 
