@@ -9,8 +9,11 @@ x-ollama-base: &ollama-base
   container_name: osm-ollama
   ports:
     - "${OLLAMA_PORT:-11434}:11434"
-  volumes:
-    - ollama_data:/root/.ollama
+  # No volume binding: the model is baked into the image at build time. A
+  # persistent volume on /root/.ollama would shadow the baked content on
+  # subsequent `up`s if it survived from a previous run with a different model.
+  # If you need to keep manually-pulled models across recreates, mount a volume
+  # via a docker-compose.override.yml.
   restart: unless-stopped
   healthcheck:
     test: ["CMD", "ollama", "list"]
@@ -89,7 +92,3 @@ services:
         condition: service_healthy
         required: false
     restart: unless-stopped
-
-volumes:
-  ollama_data:
-    name: osm-ollama-data

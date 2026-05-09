@@ -49,6 +49,12 @@ def _extract_tool_outputs(response) -> list[tuple[str, Any]]:
     results: list[tuple[str, Any]] = []
     for msg in getattr(response, "messages", []):
         for content in getattr(msg, "contents", []):
+            ctype = getattr(content, "type", None) or type(content).__name__
+            log.info(
+                "DEBUG content type=%s attrs=%s",
+                ctype,
+                [a for a in dir(content) if not a.startswith("_")][:15],
+            )
             if getattr(content, "type", None) == "mcp_server_tool_result":
                 tool_name = getattr(content, "tool_name", None) or ""
                 output = getattr(content, "output", None)
