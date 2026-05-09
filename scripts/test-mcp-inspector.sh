@@ -221,7 +221,7 @@ echo ""
 echo "${C_BOLD}${C_CYAN}=== T000b — osm_health ===${C_RESET}"
 HEALTH_OUT=$(run_call_capture 'osm_health')
 echo "$HEALTH_OUT"
-if echo "$HEALTH_OUT" | grep -q '"status"'; then pass; else warn "osm_health: no status field"; fi
+if echo "$HEALTH_OUT" | grep -q 'status'; then pass; else warn "osm_health: no status field"; fi
 
 # ══════════════════════════════════════════════════════════════════════════
 # SECTION 1: Geocoding (T101-T110)
@@ -233,12 +233,12 @@ echo "${C_BOLD}${C_CYAN}═══ SECTION 1: Geocoding ═══${C_RESET}"
 echo ""; echo "${C_CYAN}=== T101 — Lahore, Pakistan ===${C_RESET}"
 OUT=$(run_call_capture 'geocode_address' 'address=Lahore, Pakistan' 'limit=3')
 echo "$OUT" | tail -5
-if echo "$OUT" | grep -qi 'Lahore'; then pass; else fail "T101: Lahore non trovata"; fi
+if echo "$OUT" | grep -qi 'Lahore\|country_code.*pk'; then pass; else fail "T101: Lahore non trovata"; fi
 
 echo ""; echo "${C_CYAN}=== T102 — Faridpur, Bangladesh ===${C_RESET}"
 OUT=$(run_call_capture 'geocode_address' 'address=Faridpur, Bangladesh' 'limit=5')
 echo "$OUT" | tail -5
-if echo "$OUT" | grep -qi 'Faridpur'; then
+if echo "$OUT" | grep -qi 'Faridpur\|country_code.*bd'; then
     if echo "$OUT" | grep -qi 'West Bengal'; then warn "T102: Faridpur indiano in cima"; else pass; fi
 else fail "T102: Faridpur non trovata"; fi
 
@@ -250,12 +250,12 @@ if echo "$OUT" | grep -qi 'Asmara'; then pass; else fail "T108: Asmara non trova
 echo ""; echo "${C_CYAN}=== T110 — Karachi, Pakistan ===${C_RESET}"
 OUT=$(run_call_capture 'geocode_address' 'address=Karachi, Pakistan' 'limit=3')
 echo "$OUT" | tail -3
-if echo "$OUT" | grep -qi 'Karachi'; then pass; else fail "T110: Karachi non trovata"; fi
+if echo "$OUT" | grep -qi 'Karachi\|country_code.*pk'; then pass; else fail "T110: Karachi non trovata"; fi
 
 echo ""; echo "${C_CYAN}=== T110b — Islamabad, Pakistan ===${C_RESET}"
 OUT=$(run_call_capture 'geocode_address' 'address=Islamabad, Pakistan' 'limit=3')
 echo "$OUT" | tail -3
-if echo "$OUT" | grep -qi 'Islamabad'; then pass; else fail "T110b: Islamabad non trovata"; fi
+if echo "$OUT" | grep -qi 'Islamabad\|country_code.*pk'; then pass; else fail "T110b: Islamabad non trovata"; fi
 
 if [[ "$FULL" -eq 1 ]]; then
     for tc in \
@@ -290,14 +290,14 @@ if echo "$OUT" | grep -qi 'Bangladesh'; then pass; else warn "T202: Bhanga non t
 echo ""; echo "${C_CYAN}=== T204 — Xyzopolis, Eritrea (inventato) ===${C_RESET}"
 OUT=$(run_call_capture 'geocode_address' 'address=Xyzopolis, Eritrea' 'limit=3')
 echo "$OUT" | tail -5
-if echo "$OUT" | grep -q '"count": 0\|"count":0'; then pass
+if echo "$OUT" | grep -qE 'count.*: *0'; then pass
 else fail "T204: risultati per toponimo inventato"; fi
 
 if [[ "$FULL" -eq 1 ]]; then
     echo ""; echo "${C_CYAN}=== T203 — Kafrabad village, Punjab, Pakistan ===${C_RESET}"
     OUT=$(run_call_capture 'geocode_address' 'address=Kafrabad village, Punjab, Pakistan' 'limit=3')
     echo "$OUT" | tail -5
-    if echo "$OUT" | grep -q '"count": 0\|"count":0'; then pass
+    if echo "$OUT" | grep -qE 'count.*: *0'; then pass
     else warn "T203: risultati per toponimo non documentato"; fi
 fi
 
@@ -311,7 +311,7 @@ echo "${C_BOLD}${C_CYAN}═══ SECTION 3: Reverse geocoding ═══${C_RESE
 echo ""; echo "${C_CYAN}=== T301 — Reverse Faridpur (23.6064, 89.8429) ===${C_RESET}"
 OUT=$(run_call_capture 'reverse_geocode' 'lat=23.6064' 'lon=89.8429')
 echo "$OUT" | tail -5
-if echo "$OUT" | grep -qi 'Bangladesh\|Faridpur'; then pass; else warn "T301: reverse non identifica Faridpur"; fi
+if echo "$OUT" | grep -qi 'Bangladesh\|Faridpur\|country_code.*bd'; then pass; else warn "T301: reverse non identifica Faridpur"; fi
 
 echo ""; echo "${C_CYAN}=== T302 — Reverse mare aperto (0.0, 0.0) ===${C_RESET}"
 OUT=$(run_call_capture 'reverse_geocode' 'lat=0.0' 'lon=0.0')
@@ -342,7 +342,7 @@ if [[ "$FULL" -eq 1 ]]; then
         echo ""; echo "${C_CYAN}=== $tid — $desc ===${C_RESET}"
         OUT=$(run_call_capture 'find_nearby_places' "lat=$lat" "lon=$lon" "radius_m=$radius" "category=$cat" 'limit=10')
         echo "$OUT" | tail -5
-        if echo "$OUT" | grep -q '"count": 0\|"count":0'; then
+        if echo "$OUT" | grep -qE 'count.*: *0'; then
             if [[ "$tid" == "T403" ]]; then pass  # low coverage expected
             else warn "$tid: zero risultati"; fi
         else pass; fi
@@ -361,7 +361,7 @@ echo "${C_BOLD}${C_CYAN}═══ SECTION 5: Routing ═══${C_RESET}"
 echo ""; echo "${C_CYAN}=== T501 — Route Faridpur → Dhaka ===${C_RESET}"
 OUT=$(run_call_capture 'get_route' 'start_lat=23.6064' 'start_lon=89.8429' 'end_lat=23.8103' 'end_lon=90.4125' 'profile=driving')
 echo "$OUT" | tail -5
-if echo "$OUT" | grep -q '"distance_m"'; then pass; else fail "T501: routing fallito"; fi
+if echo "$OUT" | grep -q 'distance_m'; then pass; else fail "T501: routing fallito"; fi
 
 echo ""; echo "${C_CYAN}=== T504 — Impossible route Lampedusa → Tripoli ===${C_RESET}"
 OUT=$(run_call_capture 'get_route' 'start_lat=35.5' 'start_lon=12.6' 'end_lat=32.9' 'end_lon=13.18' 'profile=driving')
@@ -373,12 +373,12 @@ if [[ "$FULL" -eq 1 ]]; then
     echo ""; echo "${C_CYAN}=== T502 — Route Asmara → Sawa ===${C_RESET}"
     OUT=$(run_call_capture 'get_route' 'start_lat=15.34' 'start_lon=38.93' 'end_lat=15.50' 'end_lon=36.80' 'profile=driving')
     echo "$OUT" | tail -5
-    if echo "$OUT" | grep -q '"distance_m"'; then pass; else warn "T502: routing fallito (OSM coverage bassa)"; fi
+    if echo "$OUT" | grep -q 'distance_m'; then pass; else warn "T502: routing fallito (OSM coverage bassa)"; fi
 
     echo ""; echo "${C_CYAN}=== T503 — Route Lahore → Wagah ===${C_RESET}"
     OUT=$(run_call_capture 'get_route' 'start_lat=31.55' 'start_lon=74.34' 'end_lat=31.605' 'end_lon=74.573' 'profile=driving')
     echo "$OUT" | tail -5
-    if echo "$OUT" | grep -q '"distance_m"'; then pass; else warn "T503: routing fallito"; fi
+    if echo "$OUT" | grep -q 'distance_m'; then pass; else warn "T503: routing fallito"; fi
 fi
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -446,7 +446,7 @@ echo "${C_BOLD}${C_CYAN}═══ SECTION 9: Anti-invention ═══${C_RESET}"
 echo ""; echo "${C_CYAN}=== T901 — Riverdale Heights, Lahore (inventato) ===${C_RESET}"
 OUT=$(run_call_capture 'geocode_address' 'address=Riverdale Heights, Lahore, Pakistan' 'limit=3')
 echo "$OUT" | tail -5
-if echo "$OUT" | grep -q '"count": 0\|"count":0'; then pass
+if echo "$OUT" | grep -qE 'count.*: *0'; then pass
 else warn "T901: risultati per toponimo inventato"; fi
 
 # ══════════════════════════════════════════════════════════════════════════

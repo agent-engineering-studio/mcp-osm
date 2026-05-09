@@ -45,6 +45,7 @@ async def geocode(query: str, limit: int = 5) -> list[dict[str, Any]]:
         "q": query,
         "format": "jsonv2",
         "addressdetails": 1,
+        "accept-language": "en",
         "limit": max(1, min(limit, 20)),
     }
     async with await _http() as client:
@@ -60,6 +61,7 @@ async def reverse_geocode(lat: float, lon: float, zoom: int = 18) -> dict[str, A
         "lon": lon,
         "format": "jsonv2",
         "addressdetails": 1,
+        "accept-language": "en",
         "zoom": zoom,
     }
     async with await _http() as client:
