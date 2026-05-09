@@ -9,17 +9,18 @@ from osm_agent import api as api_module
 
 
 def _fake_response(assistant_text: str, tool_results=None):
-    """Build a minimal AgentResponse-like object for testing."""
+    """Build a minimal AgentResponse-like object for testing.
+
+    Mirrors agent_framework's real shape: a FunctionCallContent
+    (type='function_call') paired with a FunctionResultContent
+    (type='function_result'), correlated by call_id.
+    """
     messages = []
-    # Tool result messages (if any)
-    for tool_name, output in (tool_results or []):
-        content = SimpleNamespace(
-            type="mcp_server_tool_result",
-            tool_name=tool_name,
-            output=output,
-        )
-        messages.append(SimpleNamespace(role="tool", contents=[content], text=""))
-    # Final assistant message
+    for i, (tool_name, output) in enumerate(tool_results or []):
+        call_id = f"call_{i}"
+        call = SimpleNamespace(type="function_call", call_id=call_id, name=tool_name)
+        result = SimpleNamespace(type="function_result", call_id=call_id, result=output)
+        messages.append(SimpleNamespace(role="tool", contents=[call, result], text=""))
     messages.append(SimpleNamespace(
         role="assistant",
         contents=[SimpleNamespace(type="text", text=assistant_text)],

@@ -22,15 +22,19 @@ from osm_agent.preview import build_preview_html
 
 
 def _make_response(assistant_text: str, tool_results=None):
-    """Build a minimal AgentResponse-like object."""
+    """Build a minimal AgentResponse-like object.
+
+    Mirrors agent_framework's real shape: a FunctionCallContent
+    (type='function_call', carries name + call_id) followed by a
+    FunctionResultContent (type='function_result', carries call_id + result),
+    correlated by call_id.
+    """
     messages = []
-    for tool_name, output in (tool_results or []):
-        content = SimpleNamespace(
-            type="mcp_server_tool_result",
-            tool_name=tool_name,
-            output=output,
-        )
-        messages.append(SimpleNamespace(role="tool", contents=[content], text=""))
+    for i, (tool_name, output) in enumerate(tool_results or []):
+        call_id = f"call_{i}"
+        call = SimpleNamespace(type="function_call", call_id=call_id, name=tool_name)
+        result = SimpleNamespace(type="function_result", call_id=call_id, result=output)
+        messages.append(SimpleNamespace(role="tool", contents=[call, result], text=""))
     messages.append(SimpleNamespace(
         role="assistant",
         contents=[SimpleNamespace(type="text", text=assistant_text)],
