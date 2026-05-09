@@ -7,6 +7,8 @@ independently.
 """
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 
@@ -19,10 +21,30 @@ class Resource(BaseModel):
     content: str | None = None
 
 
+class PlaceDescription(BaseModel):
+    """Structured summary of a place / route / POI set found by the agent."""
+
+    name: str
+    type: str  # "city", "poi", "route", "area", "not_found"
+    lat: float | None = None
+    lon: float | None = None
+    country: str | None = None
+    country_code: str | None = None
+    details: dict[str, Any] = Field(default_factory=dict)
+
+
 class ChatResponse(BaseModel):
-    """Universal agent reply: narrative text + heterogeneous resources."""
+    """Universal agent reply: narrative text + structured descriptions + resources.
+
+    ``preview_html`` is a compact, self-contained HTML snippet (~2-10 KB)
+    suitable for inline rendering in a chat bubble or webview.  It contains
+    a mini Leaflet map with markers/routes from the results plus a brief
+    text overlay.  ``None`` when no geographic features were found.
+    """
 
     text: str
+    description: list[PlaceDescription] = Field(default_factory=list)
+    preview_html: str | None = None
     resources: list[Resource] = Field(default_factory=list)
 
 

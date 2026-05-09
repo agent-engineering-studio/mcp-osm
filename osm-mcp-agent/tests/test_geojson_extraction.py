@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from osm_agent.api import (
+    _build_descriptions,
     _build_resources_from_tool_outputs,
     _extract_tool_outputs,
     _get_assistant_text,
@@ -16,6 +17,7 @@ from osm_agent.api import (
     _process_agent_response,
     _tool_data_to_features,
 )
+from osm_agent.preview import build_preview_html
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────
@@ -233,10 +235,10 @@ def test_build_geojson_resource_from_geocode():
     tool_outputs = [
         ("geocode_address", '{"results": [{"display_name": "Lahore", "lat": 31.55, "lon": 74.34}], "count": 1}'),
     ]
-    resources = _build_resources_from_tool_outputs(tool_outputs)
+    resources, fc = _build_resources_from_tool_outputs(tool_outputs)
     assert len(resources) == 1
     assert resources[0].format == "GEOJSON"
-    fc = json.loads(resources[0].content)
+    assert fc is not None
     assert fc["type"] == "FeatureCollection"
     assert len(fc["features"]) == 1
     assert fc["features"][0]["geometry"]["coordinates"] == [74.34, 31.55]
@@ -253,10 +255,11 @@ def test_build_html_resource_from_render_tool():
             }},
         ]),
     ]
-    resources = _build_resources_from_tool_outputs(tool_outputs)
+    resources, fc = _build_resources_from_tool_outputs(tool_outputs)
     assert len(resources) == 1
     assert resources[0].format == "HTML"
     assert "<!doctype html>" in resources[0].content
+    assert fc is None
 
 
 def test_build_both_geojson_and_html():
@@ -271,18 +274,20 @@ def test_build_both_geojson_and_html():
             }},
         ]),
     ]
-    resources = _build_resources_from_tool_outputs(tool_outputs)
+    resources, fc = _build_resources_from_tool_outputs(tool_outputs)
     assert len(resources) == 2
     formats = {r.format for r in resources}
     assert formats == {"GEOJSON", "HTML"}
+    assert fc is not None
 
 
 def test_build_empty_when_no_coordinates():
     tool_outputs = [
         ("osm_health", '{"status": "healthy", "nominatim": true}'),
     ]
-    resources = _build_resources_from_tool_outputs(tool_outputs)
+    resources, fc = _build_resources_from_tool_outputs(tool_outputs)
     assert resources == []
+    assert fc is None
 
 
 # ── _get_assistant_text ────────────────────────────────────────────────
@@ -373,3 +378,186 @@ def test_process_response_multiple_tools():
     assert chat_resp.resources[0].format == "GEOJSON"
     fc = json.loads(chat_resp.resources[0].content)
     assert len(fc["features"]) == 3  # 1 geocode + 2 POIs
+
+
+# ── _build_descriptions ───────────────────────────────────────────────
+
+
+def test_build_descriptions_geocode():
+    fc = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [74.34, 31.55]},
+                "properties": {
+                    "name": "Lahore, Punjab, Pakistan",
+                    "country": "Pakistan",
+                    "country_code": "pk",
+                    "type": "city",
+                },
+            },
+        ],
+    }
+    descs = _build_descriptions(fc)
+    assert len(descs) == 1
+    assert descs[0].name == "Lahore, Punjab, Pakistan"
+    assert descs[0].type == "city"
+    assert descs[0].lat == 31.55
+    assert descs[0].lon == 74.34
+    assert descs[0].country == "Pakistan"
+    assert descs[0].country_code == "pk"
+
+
+def test_build_descriptions_route():
+    fc = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "geometry": {
+                    "type": "LineString",
+                    "coordinates": [[9.0, 45.0], [9.5, 45.5], [10.0, 46.0]],
+                },
+                "properties": {
+                    "name": "Driving route",
+                    "distance_m": 12000,
+                    "duration_s": 900,
+                },
+            },
+        ],
+    }
+    descs = _build_descriptions(fc)
+    assert len(descs) == 1
+    assert descs[0].type == "route"
+    assert descs[0].lat == 45.5  # midpoint
+    assert descs[0].lon == 9.5
+    assert descs[0].details["distance_m"] == 12000
+
+
+def test_build_descriptions_poi():
+    fc = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [9.0, 45.0]},
+                "properties": {"name": "Ristorante A", "category": "restaurant"},
+            },
+        ],
+    }
+    descs = _build_descriptions(fc)
+    assert len(descs) == 1
+    assert descs[0].type == "poi"
+    assert descs[0].details["category"] == "restaurant"
+
+
+def test_build_descriptions_empty():
+    assert _build_descriptions(None) == []
+    assert _build_descriptions({"type": "FeatureCollection", "features": []}) == []
+
+
+# ── build_preview_html ─────────────────────────────────────────────────
+
+
+def test_preview_html_contains_leaflet():
+    fc = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [9.19, 45.46]},
+                "properties": {"name": "Milano"},
+            },
+        ],
+    }
+    html = build_preview_html(fc, "Milano preview")
+    assert html is not None
+    assert "leaflet" in html.lower()
+    assert "FeatureCollection" in html
+    assert "Milano preview" in html
+
+
+def test_preview_html_none_when_empty():
+    fc = {"type": "FeatureCollection", "features": []}
+    assert build_preview_html(fc) is None
+
+
+def test_preview_html_escapes_xss():
+    fc = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [0, 0]},
+                "properties": {"name": "Test"},
+            },
+        ],
+    }
+    html = build_preview_html(fc, '<script>alert("xss")</script>')
+    assert "<script>alert" not in html
+    assert "&lt;script&gt;" in html
+
+
+def test_preview_html_auto_summary_from_features():
+    fc = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [9.19, 45.46]},
+                "properties": {"name": "Milano"},
+            },
+            {
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [11.25, 43.77]},
+                "properties": {"name": "Firenze"},
+            },
+        ],
+    }
+    html = build_preview_html(fc)
+    assert html is not None
+    assert "Milano" in html
+    assert "Firenze" in html
+
+
+# ── _process_agent_response with descriptions + preview ───────────────
+
+
+def test_process_response_includes_description_and_preview():
+    resp = _make_response(
+        "Lahore is a city in Punjab, Pakistan.",
+        tool_results=[
+            ("geocode_address", json.dumps({
+                "results": [
+                    {"display_name": "Lahore, Punjab, Pakistan",
+                     "lat": 31.55, "lon": 74.34, "type": "city",
+                     "country": "Pakistan", "country_code": "pk"},
+                ],
+                "count": 1,
+            })),
+        ],
+    )
+    chat_resp = _process_agent_response(resp)
+
+    # description populated
+    assert len(chat_resp.description) == 1
+    assert chat_resp.description[0].name == "Lahore, Punjab, Pakistan"
+    assert chat_resp.description[0].lat == 31.55
+
+    # preview_html generated
+    assert chat_resp.preview_html is not None
+    assert "leaflet" in chat_resp.preview_html.lower()
+    assert "FeatureCollection" in chat_resp.preview_html
+
+
+def test_process_response_no_preview_when_no_features():
+    resp = _make_response(
+        "Nessun risultato.",
+        tool_results=[
+            ("geocode_address", json.dumps({"results": [], "count": 0})),
+        ],
+    )
+    chat_resp = _process_agent_response(resp)
+    assert chat_resp.description == []
+    assert chat_resp.preview_html is None

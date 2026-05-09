@@ -25,8 +25,9 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 
 from .config import Settings, get_settings
-from .contracts import ChatRequest, ChatResponse, ComposeMapRequest, Resource
+from .contracts import ChatRequest, ChatResponse, ComposeMapRequest, PlaceDescription, Resource
 from .factory import AgentSession
+from .preview import build_preview_html
 
 log = logging.getLogger("osm-agent.api")
 
@@ -189,10 +190,16 @@ def _tool_data_to_features(tool_name: str, data: dict) -> list[dict]:
 
 def _build_resources_from_tool_outputs(
     tool_outputs: list[tuple[str, Any]],
-) -> list[Resource]:
-    """Build GeoJSON + HTML resources from extracted tool outputs."""
+) -> tuple[list[Resource], dict[str, Any] | None]:
+    """Build GeoJSON + HTML resources from extracted tool outputs.
+
+    Returns
+    -------
+    (resources, feature_collection_or_none)
+    """
     all_features: list[dict] = []
     resources: list[Resource] = []
+    fc: dict[str, Any] | None = None
 
     for tool_name, output in tool_outputs:
         data, resource_blocks = _parse_mcp_output(output)
@@ -220,7 +227,7 @@ def _build_resources_from_tool_outputs(
             content=json.dumps(fc, ensure_ascii=False),
         ))
 
-    return resources
+    return resources, fc
 
 
 def _get_assistant_text(response) -> str:
@@ -239,18 +246,77 @@ def _get_assistant_text(response) -> str:
     return _RESOURCES_RE.sub("", raw).strip()
 
 
+def _build_descriptions(fc: dict[str, Any] | None) -> list[PlaceDescription]:
+    """Build structured PlaceDescription list from the FeatureCollection."""
+    if not fc:
+        return []
+    descs: list[PlaceDescription] = []
+    for feat in fc.get("features", []):
+        props = feat.get("properties") or {}
+        geom = feat.get("geometry") or {}
+        coords = geom.get("coordinates")  # [lon, lat] or nested
+        name = props.get("name") or props.get("display_name") or "Unknown"
+
+        # Determine type from geometry + properties
+        geom_type = geom.get("type", "")
+        if geom_type == "LineString":
+            ptype = "route"
+        elif geom_type == "Polygon":
+            ptype = "area"
+        elif props.get("category"):
+            ptype = "poi"
+        else:
+            ptype = "city" if props.get("country") else "poi"
+
+        lat: float | None = None
+        lon: float | None = None
+        if coords and geom_type == "Point":
+            lon, lat = coords[0], coords[1]
+        elif coords and geom_type == "LineString" and coords:
+            # midpoint of the route
+            mid = coords[len(coords) // 2]
+            lon, lat = mid[0], mid[1]
+
+        # Collect extra details (exclude name/display_name already used)
+        details: dict[str, Any] = {}
+        for key in ("category", "distance_m", "duration_s", "role",
+                    "osm_type", "osm_id", "address", "type"):
+            if key in props:
+                details[key] = props[key]
+
+        descs.append(PlaceDescription(
+            name=name,
+            type=ptype,
+            lat=lat,
+            lon=lon,
+            country=props.get("country"),
+            country_code=props.get("country_code"),
+            details=details,
+        ))
+    return descs
+
+
 def _process_agent_response(response) -> ChatResponse:
     """Convert an AgentResponse into a structured ChatResponse.
 
     1. Extract clean assistant text (the LLM summary).
     2. Extract MCP tool results from messages.
     3. Build GeoJSON resources from coordinate data.
-    4. Collect HTML resources from render_* tool results.
+    4. Build structured descriptions from features.
+    5. Build HTML preview snippet for chat embeds.
+    6. Collect HTML resources from render_* tool results.
     """
     text = _get_assistant_text(response)
     tool_outputs = _extract_tool_outputs(response)
-    resources = _build_resources_from_tool_outputs(tool_outputs)
-    return ChatResponse(text=text, resources=resources)
+    resources, fc = _build_resources_from_tool_outputs(tool_outputs)
+    description = _build_descriptions(fc)
+    preview_html = build_preview_html(fc, text[:120]) if fc else None
+    return ChatResponse(
+        text=text,
+        description=description,
+        preview_html=preview_html,
+        resources=resources,
+    )
 
 
 _session: AgentSession | None = None
