@@ -43,23 +43,29 @@ _RESOURCES_RE = re.compile(
 
 
 def _extract_tool_outputs(response) -> list[tuple[str, Any]]:
-    """Walk AgentResponse.messages and collect (tool_name, output) pairs
-    from every ``mcp_server_tool_result`` Content item.
+    """Walk AgentResponse.messages and collect (tool_name, output) pairs.
+
+    agent_framework emits a FunctionCallContent (type='function_call') carrying
+    the tool name, followed by a FunctionResultContent (type='function_result')
+    whose .result holds the tool output. They are correlated by call_id.
     """
+    name_by_call_id: dict[str, str] = {}
     results: list[tuple[str, Any]] = []
     for msg in getattr(response, "messages", []):
         for content in getattr(msg, "contents", []):
-            ctype = getattr(content, "type", None) or type(content).__name__
-            log.info(
-                "DEBUG content type=%s attrs=%s",
-                ctype,
-                [a for a in dir(content) if not a.startswith("_")][:15],
-            )
-            if getattr(content, "type", None) == "mcp_server_tool_result":
-                tool_name = getattr(content, "tool_name", None) or ""
-                output = getattr(content, "output", None)
-                if output is not None:
-                    results.append((tool_name, output))
+            ctype = getattr(content, "type", None)
+            if ctype == "function_call":
+                cid = getattr(content, "call_id", None)
+                name = getattr(content, "name", None)
+                if cid and name:
+                    name_by_call_id[cid] = name
+            elif ctype == "function_result":
+                cid = getattr(content, "call_id", None)
+                output = getattr(content, "result", None)
+                if output is None:
+                    continue
+                tool_name = name_by_call_id.get(cid) or cid or ""
+                results.append((tool_name, output))
     return results
 
 
