@@ -6,8 +6,6 @@ with text summary + GeoJSON/HTML resources from tool outputs.
 import json
 from types import SimpleNamespace
 
-import pytest
-
 from osm_agent.api import (
     _build_descriptions,
     _build_resources_from_tool_outputs,

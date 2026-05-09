@@ -1,4 +1,4 @@
-# ══════════════════════════════════════════════════════════════════════════
+﻿# ══════════════════════════════════════════════════════════════════════════
 # Smoke-test del server osm-mcp + agent via MCP Inspector CLI.
 #
 # Lo script avvia automaticamente i container docker se non in esecuzione,
@@ -30,6 +30,9 @@
 #   get_route, suggest_meeting_point, explore_area, find_ev_charging_stations,
 #   analyze_commute, osm_health, render_geojson_map, render_multi_layer_map,
 #   compose_map_from_resources
+#
+# Section 12 (Smart Agent) verifica il flusso completo LLM:
+#   query → tool call → ChatResponse con text + description + preview_html + resources(FeatureCollection)
 # ══════════════════════════════════════════════════════════════════════════
 
 [CmdletBinding()]
@@ -551,6 +554,136 @@ try {
         } else {
             Write-Host "  Provider=$provider - skip test /chat Claude (non consuma token)"
             Test-Skip
+        }
+
+        # ══════════════════════════════════════════════════════════════════
+        # SECTION 12: Smart Agent — full ChatResponse contract verification
+        # Verifica il flusso LLM: query → tool call → GeoJSON FeatureCollection
+        #   + description (structured) + preview_html (Leaflet snippet)
+        # Funziona con qualunque provider (Claude o Ollama).
+        # ══════════════════════════════════════════════════════════════════
+
+        Write-Host ''
+        Write-Host '=== SECTION 12: Smart Agent (LLM full pipeline) ===' -ForegroundColor Cyan
+
+        # ── TA10: Geocode via LLM → verifica contratto ChatResponse completo ──
+        Write-Host ''; Write-Host '=== TA10 - /chat geocode -> ChatResponse contract ===' -ForegroundColor Cyan
+        $chatBody = '{"query": "Where is Milan, Italy? Give me the coordinates."}'
+        try {
+            $chatResp = Invoke-RestMethod -Method Post -Uri "$AgentUrl/chat" `
+                -ContentType 'application/json' -Body $chatBody -TimeoutSec 90
+
+            # text field present and non-empty
+            if ([string]::IsNullOrWhiteSpace($chatResp.text)) {
+                Test-Fail 'TA10: text field is empty'
+            } else {
+                Write-Host "  text (trunc): $($chatResp.text.Substring(0, [Math]::Min(80, $chatResp.text.Length)))..."
+                Test-Pass
+            }
+
+            # resources: at least 1 GEOJSON FeatureCollection
+            $geojsonRes = $chatResp.resources | Where-Object { $_.format -eq 'GEOJSON' }
+            if ($geojsonRes) {
+                $fc = $geojsonRes[0].content | ConvertFrom-Json
+                if ($fc.type -eq 'FeatureCollection' -and $fc.features.Count -gt 0) {
+                    Write-Host "  resources: FeatureCollection with $($fc.features.Count) feature(s)"
+                    Test-Pass
+                } else {
+                    Test-Fail 'TA10: GEOJSON resource is not a valid FeatureCollection'
+                }
+            } else {
+                Test-Warn 'TA10: no GEOJSON resource (LLM may not have called geocode tool)'
+            }
+
+            # description: structured place descriptions
+            if ($chatResp.description -and $chatResp.description.Count -gt 0) {
+                $d = $chatResp.description[0]
+                Write-Host "  description[0]: name=$($d.name), type=$($d.type), lat=$($d.lat), lon=$($d.lon)"
+                if ($d.lat -and $d.lon) { Test-Pass }
+                else { Test-Warn 'TA10: description present but missing coordinates' }
+            } else {
+                Test-Warn 'TA10: no description (LLM may not have called geocode tool)'
+            }
+
+            # preview_html: Leaflet snippet
+            if ($chatResp.preview_html) {
+                if ($chatResp.preview_html -match 'leaflet' -and $chatResp.preview_html -match 'FeatureCollection') {
+                    Write-Host "  preview_html: present ($($chatResp.preview_html.Length) chars)"
+                    Test-Pass
+                } else {
+                    Test-Warn 'TA10: preview_html present but missing leaflet/FeatureCollection'
+                }
+            } else {
+                Test-Warn 'TA10: no preview_html (LLM may not have called geocode tool)'
+            }
+        } catch {
+            Test-Warn "TA10: errore /chat: $($_.Exception.Message)"
+        }
+
+        # ── TA11: POI search via LLM → multiple features in FeatureCollection ──
+        Write-Host ''; Write-Host '=== TA11 - /chat POI search -> multi-feature response ===' -ForegroundColor Cyan
+        $chatBody = '{"query": "Find restaurants within 2km of the Colosseum in Rome, Italy."}'
+        try {
+            $chatResp = Invoke-RestMethod -Method Post -Uri "$AgentUrl/chat" `
+                -ContentType 'application/json' -Body $chatBody -TimeoutSec 90
+
+            $geojsonRes = $chatResp.resources | Where-Object { $_.format -eq 'GEOJSON' }
+            if ($geojsonRes) {
+                $fc = $geojsonRes[0].content | ConvertFrom-Json
+                if ($fc.features.Count -gt 1) {
+                    Write-Host "  FeatureCollection: $($fc.features.Count) features (POIs)"
+                    Test-Pass
+                } else {
+                    Test-Warn "TA11: only $($fc.features.Count) feature(s)"
+                }
+            } else {
+                Test-Warn 'TA11: no GEOJSON resource'
+            }
+
+            if ($chatResp.description.Count -gt 1) {
+                Write-Host "  descriptions: $($chatResp.description.Count) places"
+                # Verify at least one has category
+                $withCat = $chatResp.description | Where-Object { $_.details.category }
+                if ($withCat) { Test-Pass } else { Test-Warn 'TA11: descriptions have no category detail' }
+            } else {
+                Test-Warn 'TA11: expected multiple descriptions for POI search'
+            }
+        } catch {
+            Test-Warn "TA11: errore /chat: $($_.Exception.Message)"
+        }
+
+        # ── TA12: Not found → empty description + no preview ──
+        Write-Host ''; Write-Host '=== TA12 - /chat not found -> empty structured fields ===' -ForegroundColor Cyan
+        $chatBody = '{"query": "Where is Xyzopolis, a fictional city that does not exist?"}'
+        try {
+            $chatResp = Invoke-RestMethod -Method Post -Uri "$AgentUrl/chat" `
+                -ContentType 'application/json' -Body $chatBody -TimeoutSec 90
+
+            if (-not [string]::IsNullOrWhiteSpace($chatResp.text)) {
+                Write-Host "  text: agent responded with explanation"
+                Test-Pass
+            } else {
+                Test-Fail 'TA12: text is empty even for not-found'
+            }
+
+            $geojsonRes = $chatResp.resources | Where-Object { $_.format -eq 'GEOJSON' }
+            if (-not $geojsonRes) {
+                Write-Host '  resources: no GEOJSON (correct for not-found)'
+                Test-Pass
+            } else {
+                $fc = $geojsonRes[0].content | ConvertFrom-Json
+                if ($fc.features.Count -eq 0) { Test-Pass }
+                else { Test-Warn 'TA12: unexpected features for fictional place' }
+            }
+
+            if (-not $chatResp.preview_html) {
+                Write-Host '  preview_html: null (correct for not-found)'
+                Test-Pass
+            } else {
+                Test-Warn 'TA12: preview_html should be null for not-found'
+            }
+        } catch {
+            Test-Warn "TA12: errore /chat: $($_.Exception.Message)"
         }
     }
 

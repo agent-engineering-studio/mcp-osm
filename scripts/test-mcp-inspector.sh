@@ -31,6 +31,9 @@
 #   get_route, suggest_meeting_point, explore_area, find_ev_charging_stations,
 #   analyze_commute, osm_health, render_geojson_map, render_multi_layer_map,
 #   compose_map_from_resources
+#
+# Section 12 (Smart Agent) verifica il flusso completo LLM:
+#   query → tool call → ChatResponse con text + description + preview_html + resources(FeatureCollection)
 # ══════════════════════════════════════════════════════════════════════════
 
 set -euo pipefail
@@ -558,6 +561,140 @@ else
     else
         echo "  Provider=$PROVIDER — skip test /chat Claude (non consuma token)"
         skip
+    fi
+
+    # ══════════════════════════════════════════════════════════════════
+    # SECTION 12: Smart Agent — full ChatResponse contract verification
+    # Verifica il flusso LLM: query → tool call → GeoJSON FeatureCollection
+    #   + description (structured) + preview_html (Leaflet snippet)
+    # Funziona con qualunque provider (Claude o Ollama).
+    # ══════════════════════════════════════════════════════════════════
+
+    echo ""
+    echo "${C_BOLD}${C_CYAN}═══ SECTION 12: Smart Agent (LLM full pipeline) ═══${C_RESET}"
+
+    # ── TA10: Geocode via LLM → verifica contratto ChatResponse completo ──
+    echo ""; echo "${C_CYAN}=== TA10 — /chat geocode → ChatResponse contract ===${C_RESET}"
+    RESP=$(curl -sf -X POST "$AGENT_URL/chat" \
+        -H 'Content-Type: application/json' \
+        -d '{"query": "Where is Milan, Italy? Give me the coordinates."}' \
+        --max-time 90 2>/dev/null) || true
+
+    if [[ -n "$RESP" ]]; then
+        # text field
+        TEXT=$(echo "$RESP" | jq -r '.text // empty')
+        if [[ -n "$TEXT" ]]; then
+            echo "  text (trunc): ${TEXT:0:80}..."
+            pass
+        else
+            fail "TA10: text field is empty"
+        fi
+
+        # resources: GEOJSON FeatureCollection
+        FC_TYPE=$(echo "$RESP" | jq -r '[.resources[] | select(.format=="GEOJSON")][0].content' 2>/dev/null \
+            | jq -r '.type // empty' 2>/dev/null) || true
+        FC_COUNT=$(echo "$RESP" | jq -r '[.resources[] | select(.format=="GEOJSON")][0].content' 2>/dev/null \
+            | jq -r '.features | length' 2>/dev/null) || true
+        if [[ "$FC_TYPE" == "FeatureCollection" && "$FC_COUNT" -gt 0 ]]; then
+            echo "  resources: FeatureCollection with $FC_COUNT feature(s)"
+            pass
+        else
+            warn "TA10: no valid GEOJSON FeatureCollection (LLM may not have called geocode tool)"
+        fi
+
+        # description: structured
+        DESC_COUNT=$(echo "$RESP" | jq -r '.description | length' 2>/dev/null) || true
+        if [[ "$DESC_COUNT" -gt 0 ]]; then
+            D_NAME=$(echo "$RESP" | jq -r '.description[0].name // empty')
+            D_LAT=$(echo "$RESP" | jq -r '.description[0].lat // empty')
+            D_LON=$(echo "$RESP" | jq -r '.description[0].lon // empty')
+            echo "  description[0]: name=$D_NAME, lat=$D_LAT, lon=$D_LON"
+            if [[ -n "$D_LAT" && -n "$D_LON" ]]; then pass
+            else warn "TA10: description present but missing coordinates"; fi
+        else
+            warn "TA10: no description (LLM may not have called geocode tool)"
+        fi
+
+        # preview_html
+        PREVIEW=$(echo "$RESP" | jq -r '.preview_html // empty')
+        if [[ -n "$PREVIEW" ]]; then
+            if echo "$PREVIEW" | grep -qi 'leaflet' && echo "$PREVIEW" | grep -q 'FeatureCollection'; then
+                echo "  preview_html: present (${#PREVIEW} chars)"
+                pass
+            else
+                warn "TA10: preview_html present but missing leaflet/FeatureCollection"
+            fi
+        else
+            warn "TA10: no preview_html (LLM may not have called geocode tool)"
+        fi
+    else
+        warn "TA10: errore /chat"
+    fi
+
+    # ── TA11: POI search via LLM → multiple features ──
+    echo ""; echo "${C_CYAN}=== TA11 — /chat POI search → multi-feature response ===${C_RESET}"
+    RESP=$(curl -sf -X POST "$AGENT_URL/chat" \
+        -H 'Content-Type: application/json' \
+        -d '{"query": "Find restaurants within 2km of the Colosseum in Rome, Italy."}' \
+        --max-time 90 2>/dev/null) || true
+
+    if [[ -n "$RESP" ]]; then
+        FC_COUNT=$(echo "$RESP" | jq -r '[.resources[] | select(.format=="GEOJSON")][0].content' 2>/dev/null \
+            | jq -r '.features | length' 2>/dev/null) || true
+        if [[ "$FC_COUNT" -gt 1 ]]; then
+            echo "  FeatureCollection: $FC_COUNT features (POIs)"
+            pass
+        else
+            warn "TA11: only ${FC_COUNT:-0} feature(s)"
+        fi
+
+        DESC_COUNT=$(echo "$RESP" | jq -r '.description | length' 2>/dev/null) || true
+        if [[ "$DESC_COUNT" -gt 1 ]]; then
+            echo "  descriptions: $DESC_COUNT places"
+            HAS_CAT=$(echo "$RESP" | jq -r '[.description[] | select(.details.category != null)] | length' 2>/dev/null) || true
+            if [[ "$HAS_CAT" -gt 0 ]]; then pass
+            else warn "TA11: descriptions have no category detail"; fi
+        else
+            warn "TA11: expected multiple descriptions for POI search"
+        fi
+    else
+        warn "TA11: errore /chat"
+    fi
+
+    # ── TA12: Not found → empty description + no preview ──
+    echo ""; echo "${C_CYAN}=== TA12 — /chat not found → empty structured fields ===${C_RESET}"
+    RESP=$(curl -sf -X POST "$AGENT_URL/chat" \
+        -H 'Content-Type: application/json' \
+        -d '{"query": "Where is Xyzopolis, a fictional city that does not exist?"}' \
+        --max-time 90 2>/dev/null) || true
+
+    if [[ -n "$RESP" ]]; then
+        TEXT=$(echo "$RESP" | jq -r '.text // empty')
+        if [[ -n "$TEXT" ]]; then
+            echo "  text: agent responded with explanation"
+            pass
+        else
+            fail "TA12: text is empty even for not-found"
+        fi
+
+        FC_COUNT=$(echo "$RESP" | jq -r '[.resources[] | select(.format=="GEOJSON")][0].content' 2>/dev/null \
+            | jq -r '.features | length' 2>/dev/null) || true
+        if [[ -z "$FC_COUNT" || "$FC_COUNT" -eq 0 ]]; then
+            echo "  resources: no GEOJSON (correct for not-found)"
+            pass
+        else
+            warn "TA12: unexpected features for fictional place"
+        fi
+
+        PREVIEW=$(echo "$RESP" | jq -r '.preview_html // empty')
+        if [[ -z "$PREVIEW" ]]; then
+            echo "  preview_html: null (correct for not-found)"
+            pass
+        else
+            warn "TA12: preview_html should be null for not-found"
+        fi
+    else
+        warn "TA12: errore /chat"
     fi
 fi
 
